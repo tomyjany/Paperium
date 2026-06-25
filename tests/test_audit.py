@@ -120,12 +120,14 @@ def test_unchanged_audit_reuses_report_and_force_rewrites_byte_identical_report(
     second = run_paperctl(repo, "audit", "--stage", "deterministic")
 
     assert second.returncode == 0, second.stderr
+    assert f"unchanged {AUDIT_PATH.as_posix()}" in second.stdout
     assert (repo / AUDIT_PATH).read_bytes() == first_bytes
     assert (repo / AUDIT_PATH).stat().st_mtime_ns == first_mtime
 
     forced = run_paperctl(repo, "audit", "--stage", "deterministic", "--force")
 
     assert forced.returncode == 0, forced.stderr
+    assert f"wrote {AUDIT_PATH.as_posix()}" in forced.stdout
     assert (repo / AUDIT_PATH).read_bytes() == first_bytes
     assert (repo / AUDIT_PATH).stat().st_mtime_ns != first_mtime
 

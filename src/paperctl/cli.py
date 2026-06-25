@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         except (ConfigError, AuditError) as exc:
             print(f"{parser.prog}: {exc}", file=sys.stderr)
             return DETERMINISTIC_FAILURE
-        print(f"wrote {result.report_path}")
+        print(f"{result.write_status} {result.report_path}")
         print(f"deterministic: {result.deterministic_status}")
         print(f"publication: {result.publication_status}")
         print(f"publication blockers: {result.blocker_count}")

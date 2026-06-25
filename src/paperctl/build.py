@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from paperctl._support.jsonio import write_json_atomic
-from paperctl.audit import AuditError, AuditResult, audit
+from paperctl.audit import AuditError, AuditResult, audit, write_build_failure_audit
 from paperctl.discovery import DiscoveryError, ManifestResult, discover
 from paperctl.inventory import InventoryAllResult, InventoryError, inventory_all
 from paperctl.normalize import NormalizeAllResult, NormalizeError, normalize_all
@@ -44,8 +44,18 @@ def build(repo: Path, config: dict[str, Any], force: bool = False) -> BuildResul
         )
         normalize_result = normalize_all(repo=repo, config=config, force=force)
         render_result = render(repo=repo, config=config, force=force)
+    except (DiscoveryError, InventoryError, NormalizeError, RenderError) as exc:
+        try:
+            _write_failed_rebuild_audit(repo, config, str(exc), force=force)
+        except AuditError as audit_exc:
+            raise BuildError(
+                f"{exc}; additionally could not update audit report: {audit_exc}"
+            ) from exc
+        raise BuildError(str(exc)) from exc
+
+    try:
         audit_result = audit(repo=repo, config=config, stage="deterministic", force=force)
-    except (AuditError, DiscoveryError, InventoryError, NormalizeError, RenderError) as exc:
+    except AuditError as exc:
         raise BuildError(str(exc)) from exc
 
     if audit_result.deterministic_status != "passed":
@@ -93,3 +103,20 @@ def _force_discovery_write(repo: Path, result: ManifestResult) -> ManifestResult
         status="replaced",
         manifest=result.manifest,
     )
+
+
+def _write_failed_rebuild_audit(
+    repo: Path,
+    config: dict[str, Any],
+    message: str,
+    *,
+    force: bool,
+) -> None:
+    if not _configured_audit_report_exists(repo, config):
+        return
+    write_build_failure_audit(repo, config, message, force=force)
+
+
+def _configured_audit_report_exists(repo: Path, config: dict[str, Any]) -> bool:
+    report_path = config["paper"]["audit_report"]
+    return (repo / Path(*PurePosixPath(report_path).parts)).exists()

@@ -34,6 +34,7 @@ class AuditError(ValueError):
 @dataclass(frozen=True)
 class AuditResult:
     report_path: str
+    write_status: str
     stage: str
     deterministic_status: str
     publication_status: str
@@ -68,10 +69,51 @@ def audit(
     context = _AuditContext(repo=repo, config=config)
     context.run()
     report = context.report(requested_stage)
-    _write_report(config, report, report_output, force=force)
+    write_status = _write_report(config, report, report_output, force=force)
     return AuditResult(
         report_path=config["paper"]["audit_report"],
+        write_status=write_status,
         stage=requested_stage,
+        deterministic_status=report["deterministic_health"]["status"],
+        publication_status=report["publication_gate"]["status"],
+        publishable=report["publishable"],
+        issue_count=len(report["deterministic_health"]["issues"]),
+        blocker_count=len(report["publication_gate"]["blockers"]),
+        issue_codes=[issue["code"] for issue in report["deterministic_health"]["issues"]],
+        blocker_codes=[blocker["code"] for blocker in report["publication_gate"]["blockers"]],
+    )
+
+
+def write_build_failure_audit(
+    repo: Path,
+    config: dict[str, Any],
+    message: str,
+    *,
+    force: bool = False,
+) -> AuditResult:
+    repo = repo.resolve()
+    report_output = _resolve_audit_report_output(repo, config)
+    manifest_for_output_protection = _load_manifest_for_output_protection(repo, config)
+    if manifest_for_output_protection is not None:
+        _reject_manifest_artifact_collisions(
+            repo,
+            config,
+            manifest_for_output_protection,
+            report_output,
+        )
+    _reject_work_directory_artifact_collisions(config)
+    context = _AuditContext(repo=repo, config=config)
+    context._issue(
+        "build_stage_failed",
+        f"deterministic build failed before audit: {message}",
+        path="paper.yaml",
+    )
+    report = context.report("deterministic")
+    write_status = _write_report(config, report, report_output, force=force)
+    return AuditResult(
+        report_path=config["paper"]["audit_report"],
+        write_status=write_status,
+        stage="deterministic",
         deterministic_status=report["deterministic_health"]["status"],
         publication_status=report["publication_gate"]["status"],
         publishable=report["publishable"],
@@ -500,19 +542,20 @@ def _write_report(
     output_path: Path,
     *,
     force: bool,
-) -> None:
+) -> str:
     report_path = config["paper"]["audit_report"]
     new_bytes = dump_json_bytes(report)
     if output_path.exists() and not force:
         try:
             if output_path.read_bytes() == new_bytes:
-                return
+                return "unchanged"
         except OSError as exc:
             raise AuditError(f"could not read existing audit report: {report_path}: {exc}") from exc
     try:
         write_json_atomic(output_path, report)
     except OSError as exc:
         raise AuditError(f"could not write audit report: {report_path}: {exc}") from exc
+    return "wrote"
 
 
 def _resolve_audit_report_output(repo: Path, config: dict[str, Any]) -> Path:

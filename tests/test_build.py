@@ -189,6 +189,39 @@ def test_build_stops_on_deterministic_stage_failure_and_exits_two(tmp_path):
     assert not (repo / AUDIT_PATH).exists()
 
 
+def test_failed_rebuild_replaces_stale_success_audit_with_deterministic_failure(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    final_before = (repo / FINAL_PATH).read_bytes()
+    first = run_paperctl(repo, "build")
+    assert first.returncode == 0, first.stderr
+    stale_success_report = read_json(repo / AUDIT_PATH)
+    assert stale_success_report["deterministic_health"]["status"] == "passed"
+
+    config = _load_config_yaml(repo)
+    config["evidence"]["canonical_facts"]["questions/q001-throughput/experiments/exp001-completed"][
+        0
+    ]["selector"] = "/does/not/exist"
+    _write_config_yaml(repo, config)
+
+    result = run_paperctl(repo, "build")
+
+    assert result.returncode == 2
+    assert "canonical selector did not resolve" in result.stderr
+    assert (repo / FINAL_PATH).read_bytes() == final_before
+    report = read_json(repo / AUDIT_PATH)
+    validate_artifact("paper-audit.schema.json", report)
+    assert report["deterministic_health"]["status"] == "failed"
+    assert report["publication_gate"]["status"] == "passed"
+    assert report["publishable"] is False
+    assert [issue["code"] for issue in report["deterministic_health"]["issues"]] == [
+        "build_stage_failed"
+    ]
+    assert (
+        "canonical selector did not resolve"
+        in report["deterministic_health"]["issues"][0]["message"]
+    )
+
+
 def test_second_unchanged_build_reuses_outputs_and_force_is_byte_identical(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     first = run_paperctl(repo, "build")
