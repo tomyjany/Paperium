@@ -114,7 +114,11 @@
             "properties": { "value_type": { "const": "number" } },
             "required": ["value_type"]
           },
-          "then": { "properties": { "value": { "type": "number" } } }
+          "then": {
+            "properties": {
+              "value": { "type": "number", "not": { "type": "integer" } }
+            }
+          }
         },
         {
           "if": {
@@ -216,7 +220,7 @@
     },
     "json_pointer": {
       "type": "string",
-      "pattern": "^(|/.*)$"
+      "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
     },
     "canonical_fact": {
       "type": "object",

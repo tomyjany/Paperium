@@ -83,7 +83,7 @@
     },
     "json_pointer": {
       "type": "string",
-      "pattern": "^(|/.*)$"
+      "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
     },
     "canonical_fact_mapping": {
       "type": "object",
