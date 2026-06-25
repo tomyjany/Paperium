@@ -126,22 +126,32 @@ def init_repo(repo: Path, force: bool) -> InitResult:
     if config_path.exists() and not force:
         raise ConfigError(f"{CONFIG_NAME} already exists; use --force to replace it")
 
+    config = validate_config(default_config(), repo)
+    work_directory = config["paper"]["work_directory"]
+    runtime_directories = [
+        resolve_repo_relative_path(repo, f"{work_directory}/{name}") for name in WORK_SUBDIRECTORIES
+    ]
+
     created: list[str] = []
     replaced: list[str] = []
+
+    for directory in runtime_directories:
+        existed = directory.exists()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            relative_path = directory.relative_to(repo).as_posix()
+            raise ConfigError(
+                f"could not create runtime directory: {relative_path}: {exc}"
+            ) from exc
+        if not existed:
+            created.append(directory.relative_to(repo).as_posix())
 
     if config_path.exists():
         replaced.append(CONFIG_NAME)
     else:
         created.append(CONFIG_NAME)
-    write_text_atomic(config_path, _dump_config(default_config()))
-
-    work_directory = default_config()["paper"]["work_directory"]
-    for name in WORK_SUBDIRECTORIES:
-        directory = resolve_repo_relative_path(repo, f"{work_directory}/{name}")
-        existed = directory.exists()
-        directory.mkdir(parents=True, exist_ok=True)
-        if not existed:
-            created.append(directory.relative_to(repo).as_posix())
+    write_text_atomic(config_path, _dump_config(config))
 
     return InitResult(created=created, replaced=replaced)
 
@@ -159,8 +169,12 @@ def _validate_config_paths(config: dict[str, Any], repo: Path) -> None:
         except ValueError as exc:
             message = str(exc)
             if "outside repository" in message:
-                raise ConfigError(f"configured path resolves outside repository: {label}={path!r}") from exc
-            raise ConfigError(f"configured path must be repo-relative POSIX: {label}={path!r}") from exc
+                raise ConfigError(
+                    f"configured path resolves outside repository: {label}={path!r}"
+                ) from exc
+            raise ConfigError(
+                f"configured path must be repo-relative POSIX: {label}={path!r}"
+            ) from exc
 
 
 def _configured_paths(config: dict[str, Any]) -> Iterable[tuple[str, Any]]:
@@ -192,6 +206,7 @@ def _configured_paths(config: dict[str, Any]) -> Iterable[tuple[str, Any]]:
             continue
         for index, mapping in enumerate(mappings):
             if isinstance(mapping, dict):
-                yield f"evidence.canonical_facts[{experiment_path!r}][{index}].source", mapping.get(
-                    "source"
+                yield (
+                    f"evidence.canonical_facts[{experiment_path!r}][{index}].source",
+                    mapping.get("source"),
                 )

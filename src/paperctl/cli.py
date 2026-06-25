@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
             result = init_repo(repo, args.force)
         except ConfigError as exc:
             print(f"{parser.prog}: {exc}", file=sys.stderr)
-            return INVALID_INVOCATION
+            return DETERMINISTIC_FAILURE
         for path in result.created:
             print(f"created {path}")
         for path in result.replaced:

@@ -8,7 +8,9 @@ import pytest
 
 
 def _git_init(path: Path) -> None:
-    subprocess.run(["git", "init"], cwd=path, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(
+        ["git", "init"], cwd=path, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
 
 
 def test_safe_yaml_parsing_rejects_custom_tags(tmp_path):
@@ -204,6 +206,42 @@ def test_paperctl_init_creates_only_config_and_work_directories(tmp_path):
     ]
     assert not (repo / "PAPER.md").exists()
     assert not (repo / "PAPER.draft.md").exists()
+
+
+def test_init_validates_generated_default_config_before_success(tmp_path, monkeypatch):
+    import paperctl.config as config_module
+    from paperctl.config import ConfigError, default_config, init_repo
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    invalid_default = default_config()
+    invalid_default["unexpected"] = True
+    monkeypatch.setattr(config_module, "default_config", lambda: invalid_default)
+
+    with pytest.raises(ConfigError, match="unexpected"):
+        init_repo(repo, force=False)
+
+    assert not (repo / "paper.yaml").exists()
+
+
+def test_init_rejects_unsafe_runtime_directory_without_partial_config(tmp_path):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (repo / "paper").symlink_to(outside, target_is_directory=True)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "paperctl", "--repo", str(repo), "init"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "outside repository" in result.stderr
+    assert not (repo / "paper.yaml").exists()
 
 
 def test_init_force_replaces_only_paper_yaml(tmp_path):
