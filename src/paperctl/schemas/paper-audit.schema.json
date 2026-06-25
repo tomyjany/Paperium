@@ -4,43 +4,173 @@
   "title": "paperctl audit report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "artifact_type", "stage", "deterministic_health", "publication_ready", "blockers"],
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "stage",
+    "deterministic_health",
+    "publication_gate",
+    "publishable",
+    "fingerprint"
+  ],
   "properties": {
     "schema_version": { "const": 1 },
     "artifact_type": { "const": "paper_audit" },
     "stage": { "enum": ["deterministic", "publication"] },
-    "deterministic_health": { "enum": ["pass", "fail"] },
-    "publication_ready": { "type": "boolean" },
-    "fingerprint": { "type": "object" },
-    "blockers": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/blocker" }
+    "deterministic_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "issues"],
+      "properties": {
+        "status": { "enum": ["passed", "failed"] },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/issue" }
+        }
+      }
+    },
+    "publication_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "blockers"],
+      "properties": {
+        "status": { "enum": ["passed", "blocked"] },
+        "blockers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/blocker" }
+        }
+      }
+    },
+    "publishable": { "type": "boolean" },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "schema_version",
+        "requested_stage",
+        "config_sha256",
+        "manifest_path",
+        "manifest_sha256",
+        "inventory_sha256",
+        "evidence_packet_sha256",
+        "render_state_path",
+        "render_state_sha256",
+        "draft_path",
+        "draft_sha256",
+        "input_counts",
+        "deterministic_status",
+        "publication_status",
+        "fingerprint_sha256"
+      ],
+      "properties": {
+        "stage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "const": "audit" },
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "schema_version": { "const": 1 },
+        "requested_stage": { "enum": ["deterministic", "publication"] },
+        "config_sha256": { "$ref": "#/$defs/hash" },
+        "manifest_path": { "$ref": "#/$defs/relative_path" },
+        "manifest_sha256": { "$ref": "#/$defs/nullable_hash" },
+        "inventory_sha256": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hash" }
+        },
+        "evidence_packet_sha256": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hash" }
+        },
+        "render_state_path": { "$ref": "#/$defs/relative_path" },
+        "render_state_sha256": { "$ref": "#/$defs/nullable_hash" },
+        "draft_path": { "$ref": "#/$defs/relative_path" },
+        "draft_sha256": { "$ref": "#/$defs/nullable_hash" },
+        "input_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "experiment_count",
+            "inventory_count",
+            "evidence_packet_count",
+            "issue_count",
+            "blocker_count"
+          ],
+          "properties": {
+            "experiment_count": { "type": "integer", "minimum": 0 },
+            "inventory_count": { "type": "integer", "minimum": 0 },
+            "evidence_packet_count": { "type": "integer", "minimum": 0 },
+            "issue_count": { "type": "integer", "minimum": 0 },
+            "blocker_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "deterministic_status": { "enum": ["passed", "failed"] },
+        "publication_status": { "enum": ["passed", "blocked"] },
+        "fingerprint_sha256": { "$ref": "#/$defs/hash" }
+      }
     }
   },
   "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullable_hash": {
+      "anyOf": [
+        { "$ref": "#/$defs/hash" },
+        { "type": "null" }
+      ]
+    },
     "relative_path": {
       "type": "string",
       "minLength": 1,
       "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
     },
+    "nullable_relative_path": {
+      "anyOf": [
+        { "$ref": "#/$defs/relative_path" },
+        { "type": "null" }
+      ]
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "code",
+        "message",
+        "path",
+        "question_path",
+        "experiment_path"
+      ],
+      "properties": {
+        "severity": { "enum": ["error", "warning", "info"] },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/relative_path" },
+        "question_path": { "$ref": "#/$defs/nullable_relative_path" },
+        "experiment_path": { "$ref": "#/$defs/nullable_relative_path" }
+      }
+    },
     "blocker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message"],
+      "required": ["severity", "code", "message", "question_path", "experiment_path"],
       "properties": {
+        "severity": { "const": "blocker" },
         "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string" },
-        "question_path": {
-          "anyOf": [
-            { "$ref": "#/$defs/relative_path" },
-            { "type": "null" }
-          ]
+        "message": { "type": "string", "minLength": 1 },
+        "question_path": { "$ref": "#/$defs/nullable_relative_path" },
+        "experiment_path": { "$ref": "#/$defs/nullable_relative_path" },
+        "preanalysis_disposition": {
+          "enum": ["analysis_candidate", "blocked", "needs_human_review"]
         },
-        "experiment_path": {
-          "anyOf": [
-            { "$ref": "#/$defs/relative_path" },
-            { "type": "null" }
-          ]
+        "evidence_status": {
+          "enum": ["available", "missing", "unsupported", "conflicting"]
         }
       }
     }

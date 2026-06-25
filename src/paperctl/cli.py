@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import sys
 
+from paperctl.audit import AuditError, audit
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
 from paperctl.discovery import DiscoveryError, discover
 from paperctl.inventory import InventoryError, inventory_all, load_manifest
@@ -103,6 +104,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"rendered {result.experiment_count} experiments")
         print(f"known publication blockers: {result.blocker_count}")
         print("Milestone 1 render never writes PAPER.md")
+        return SUCCESS
+    if args.command == "audit":
+        try:
+            config = load_config(repo)
+            stage = args.stage or config["audit"]["default_stage"]
+            result = audit(repo, config, stage)
+        except (ConfigError, AuditError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        print(f"wrote {result.report_path}")
+        print(f"deterministic: {result.deterministic_status}")
+        print(f"publication: {result.publication_status}")
+        print(f"publication blockers: {result.blocker_count}")
+        print(f"publishable: {str(result.publishable).lower()}")
+        if result.deterministic_status != "passed":
+            print(
+                f"{parser.prog}: deterministic audit failed: {', '.join(result.issue_codes)}",
+                file=sys.stderr,
+            )
+            return DETERMINISTIC_FAILURE
+        if result.stage == "publication" and result.publication_status != "passed":
+            return PUBLICATION_BLOCKED
         return SUCCESS
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
