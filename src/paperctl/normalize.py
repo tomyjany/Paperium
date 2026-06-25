@@ -172,6 +172,10 @@ def _expected_inventory(
     try:
         _validate_manifest_experiment_path_ancestors(repo, experiment_path)
         experiment_dir = repo / Path(*PurePosixPath(experiment_path).parts)
+        if experiment_dir.is_symlink():
+            raise InventoryError(f"manifest experiment path is a symlink: {experiment_path}")
+        if not experiment_dir.is_dir():
+            raise InventoryError(f"manifest experiment path is not a directory: {experiment_path}")
         artifacts = _inventory_artifacts(repo, experiment_dir)
         fingerprint = _inventory_fingerprint(
             repo=repo,
@@ -471,10 +475,13 @@ def _extract_artifacts(
             )
             continue
         path = repo / artifact["path"]
+        maximum_file_bytes = limits["maximum_file_bytes"]
+        over_byte_limit = artifact["byte_size"] > maximum_file_bytes
+        if over_byte_limit:
+            parts.reason_codes.add("normalization_truncated")
         if artifact["kind"] in {"json", "yaml"}:
-            if artifact["byte_size"] > limits["maximum_file_bytes"]:
-                parts.warnings.append(_none_record(artifact, "file exceeded extraction byte limit"))
-                parts.reason_codes.add("normalization_truncated")
+            if over_byte_limit:
+                parts.warnings.append(_byte_limit_warning(artifact, inspected_byte_count=0))
                 continue
             _record_adapter(parts, artifact["kind"])
             module = json_adapter if artifact["kind"] == "json" else yaml_adapter
@@ -501,6 +508,10 @@ def _extract_artifacts(
             if truncated:
                 parts.reason_codes.add("normalization_truncated")
             continue
+        if artifact["kind"] in {"csv", "markdown"} and over_byte_limit:
+            parts.warnings.append(_byte_limit_warning(artifact, inspected_byte_count=0))
+            continue
+        max_bytes = maximum_file_bytes if over_byte_limit else None
         if artifact["kind"] == "csv":
             _record_adapter(parts, "csv")
             previews, diagnostics, warnings, redactions = csv_adapter.extract(
@@ -508,6 +519,7 @@ def _extract_artifacts(
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
                 preview_rows=limits["preview_rows"],
+                max_bytes=max_bytes,
             )
         elif artifact["kind"] == "jsonl":
             _record_adapter(parts, "jsonl")
@@ -516,6 +528,7 @@ def _extract_artifacts(
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
                 preview_rows=limits["preview_rows"],
+                max_bytes=max_bytes,
             )
         elif artifact["kind"] == "markdown":
             _record_adapter(parts, "markdown")
@@ -524,6 +537,7 @@ def _extract_artifacts(
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
                 preview_lines=limits["log_head_lines"],
+                max_bytes=max_bytes,
             )
         else:
             _record_adapter(parts, "log")
@@ -533,6 +547,7 @@ def _extract_artifacts(
                 source_hash=artifact["sha256"],
                 head_lines=limits["log_head_lines"],
                 tail_lines=limits["log_tail_lines"],
+                max_bytes=max_bytes,
             )
         parts.previews.extend(previews)
         parts.diagnostics.extend(diagnostics)
@@ -704,8 +719,19 @@ def _selector_leaf(selector: str) -> str:
     return leaf.replace("~1", "/").replace("~0", "~")
 
 
-def _none_record(artifact: dict[str, Any], message: str) -> dict[str, Any]:
-    return {"source": _none_source(artifact), "message": message}
+def _none_record(artifact: dict[str, Any], message: str, **fields: Any) -> dict[str, Any]:
+    return {"source": _none_source(artifact), "message": message, **fields}
+
+
+def _byte_limit_warning(artifact: dict[str, Any], *, inspected_byte_count: int) -> dict[str, Any]:
+    omitted_byte_count = max(0, artifact["byte_size"] - inspected_byte_count)
+    return _none_record(
+        artifact,
+        "file exceeded extraction byte limit",
+        warning_type="byte_limit_truncated",
+        inspected_byte_count=inspected_byte_count,
+        omitted_byte_count=omitted_byte_count,
+    )
 
 
 def _none_source(artifact: dict[str, Any]) -> dict[str, Any]:

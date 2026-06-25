@@ -11,6 +11,10 @@ def _evidence_packet(**overrides):
         "artifact_type": "evidence_packet",
         "question_path": "questions/q001-throughput",
         "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
+        "inventory_path": (
+            "paper/work/inventories/questions/q001-throughput/experiments/exp001-baseline.json"
+        ),
+        "fingerprint": {"stage": "test"},
         "preanalysis_disposition": "blocked",
         "execution_status": "unknown",
         "evidence_status": "missing",
@@ -209,6 +213,22 @@ def test_evidence_packet_schema_has_closed_reason_codes_and_status_fields():
     packet["reason_codes"] = ["made_up_reason"]
     with pytest.raises(ValidationError):
         validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_evidence_packet_schema_requires_generated_metadata():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("evidence-packet.schema.json", _evidence_packet())
+
+    missing_inventory = _evidence_packet()
+    del missing_inventory["inventory_path"]
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", missing_inventory)
+
+    missing_fingerprint = _evidence_packet()
+    del missing_fingerprint["fingerprint"]
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", missing_fingerprint)
 
 
 def test_evidence_packet_relative_paths_must_be_posix_repo_relative():

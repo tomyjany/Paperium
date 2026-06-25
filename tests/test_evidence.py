@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +119,24 @@ def test_normalize_requires_fresh_manifest_and_inventory(tmp_path):
 
     assert stale.returncode == 2
     assert "stale artifact inventory" in stale.stderr
+
+
+def test_normalize_rejects_final_experiment_path_symlink_when_verifying_inventory(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_prerequisites(repo)
+    entry = _entry(manifest, "exp002-incomplete")
+    experiment = repo / entry["experiment_path"]
+    outside = tmp_path / "outside-experiment"
+    shutil.copytree(experiment, outside)
+    shutil.rmtree(experiment)
+    experiment.symlink_to(outside, target_is_directory=True)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 2
+    assert "manifest experiment path is a symlink" in result.stderr
+    assert entry["experiment_path"] in result.stderr
+    assert not (outside / "paper").exists()
 
 
 def test_json_yaml_scalar_observations_use_json_pointer_and_canonical_bypasses_limits(
@@ -414,6 +433,25 @@ def test_user_configured_canonical_fact_errors_are_deterministic_configuration_f
         assert expected in result.stderr
 
 
+def test_configured_canonical_json_pointer_rejects_negative_array_index(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp020-negative-array-index")
+    _write_json(experiment / "outputs" / "metrics.json", {"items": [10]})
+    _add_canonical_mapping(
+        repo,
+        "exp020-negative-array-index",
+        selector="/items/-1",
+        expected_type="number",
+    )
+    _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 2
+    assert "canonical selector did not resolve" in result.stderr
+    assert "/items/-1" in result.stderr
+
+
 def test_duplicate_configured_fact_id_with_different_sources_is_configuration_failure(
     tmp_path,
 ):
@@ -520,6 +558,97 @@ def test_csv_and_jsonl_numeric_summaries_are_diagnostics_not_observed_values(tmp
     assert jsonl_summary["numeric_value_count"] == 2
     assert jsonl_summary["omitted_value_count"] == 1
     assert jsonl_summary["summary"] == {"count": 2, "max": 2.0, "min": 1.0}
+
+
+def test_over_limit_csv_markdown_jsonl_and_log_extraction_is_bounded(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp035-large-supported-files")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "table.csv").write_text(
+        "score\n" + "".join(f"{index}\n" for index in range(30)),
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "notes.md").write_text(
+        "# Heading\n" + ("body line\n" * 12),
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "events.jsonl").write_text(
+        "".join(f'{{"score": {index}}}\n' for index in range(20)),
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "run.log").write_text(
+        "".join(f"line {index}\n" for index in range(20)),
+        encoding="utf-8",
+    )
+    config = _load_config(repo)
+    config["evidence"]["extraction_limits"]["maximum_file_bytes"] = 40
+    _write_config(repo, config)
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp035-large-supported-files")
+    assert "normalization_truncated" in packet["reason_codes"]
+    assert not [
+        record
+        for record in packet["previews"] + packet["diagnostics"]
+        if record["source"]["path"].endswith(("/table.csv", "/notes.md"))
+    ]
+    truncation_warnings = [
+        warning
+        for warning in packet["warnings"]
+        if warning.get("warning_type") == "byte_limit_truncated"
+    ]
+    assert sorted(
+        (
+            warning["source"]["path"].rsplit("/", 1)[-1],
+            warning["inspected_byte_count"],
+            warning["omitted_byte_count"] > 0,
+        )
+        for warning in truncation_warnings
+    ) == [
+        ("events.jsonl", 40, True),
+        ("notes.md", 0, True),
+        ("run.log", 40, True),
+        ("table.csv", 0, True),
+    ]
+    assert any(
+        diagnostic.get("calculation_label") == "jsonl_numeric_field_summary"
+        and diagnostic["source"]["path"].endswith("/events.jsonl")
+        for diagnostic in packet["diagnostics"]
+    )
+    log_summary = next(
+        diagnostic
+        for diagnostic in packet["diagnostics"]
+        if diagnostic.get("calculation_label") == "log_line_summary"
+        and diagnostic["source"]["path"].endswith("/run.log")
+    )
+    assert log_summary["byte_limit_truncated"] is True
+    assert log_summary["omitted_byte_count"] > 0
+
+
+def test_supported_text_decode_error_after_inventory_sniff_is_deterministic(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp035-invalid-utf8-csv")
+    (experiment / "outputs").mkdir()
+    csv_path = experiment / "outputs" / "table.csv"
+    csv_path.write_bytes(b"score\n1\n" + (b"2\n" * 33000) + b"\xff\n")
+    config = _load_config(repo)
+    config["evidence"]["extraction_limits"]["maximum_file_bytes"] = csv_path.stat().st_size + 1
+    _write_config(repo, config)
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+    packet = _packet(repo, manifest, "exp035-invalid-utf8-csv")
+    assert any(
+        diagnostic["source"]["path"].endswith("/outputs/table.csv")
+        and "could not decode CSV" in diagnostic["message"]
+        for diagnostic in packet["diagnostics"]
+    )
 
 
 def test_log_diagnostics_record_fixed_warning_error_patterns_by_line(tmp_path):

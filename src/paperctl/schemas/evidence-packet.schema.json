@@ -9,6 +9,8 @@
         "artifact_type",
         "question_path",
         "experiment_path",
+        "inventory_path",
+        "fingerprint",
         "preanalysis_disposition",
         "execution_status",
         "evidence_status",

@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from paperctl.adapters._text import read_utf8
 from paperctl._support.redaction import escape_markdown_text, redact_text
 
 
@@ -25,23 +26,31 @@ def extract(
     source_hash: str,
     head_lines: int,
     tail_lines: int,
+    max_bytes: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int]:
     previews: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     redactions = 0
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        bounded = read_utf8(path, max_bytes=max_bytes)
+    except UnicodeDecodeError as exc:
+        diagnostics.append(
+            _record(source_path, source_hash, f"could not decode log as UTF-8: {exc}", 1, 1)
+        )
+        return previews, diagnostics, warnings, redactions
     except OSError as exc:
         diagnostics.append(_record(source_path, source_hash, f"could not read log: {exc}", 1, 1))
         return previews, diagnostics, warnings, redactions
 
+    lines = bounded.text.splitlines()
     selected: list[tuple[int, str]] = []
     for index, line in enumerate(lines[:head_lines], start=1):
         selected.append((index, line))
-    tail_start = max(head_lines, len(lines) - tail_lines)
-    for index, line in enumerate(lines[tail_start:], start=tail_start + 1):
-        selected.append((index, line))
+    if not bounded.truncated:
+        tail_start = max(head_lines, len(lines) - tail_lines)
+        for index, line in enumerate(lines[tail_start:], start=tail_start + 1):
+            selected.append((index, line))
     seen: set[int] = set()
     for line_number, line in selected:
         if line_number in seen:
@@ -85,9 +94,25 @@ def extract(
             inspected_line_start=1,
             inspected_line_end=len(lines),
             inspected_line_count=len(lines),
+            byte_limit_truncated=bounded.truncated,
+            inspected_byte_count=bounded.inspected_byte_count,
+            omitted_byte_count=bounded.omitted_byte_count,
             pattern_counts=pattern_counts,
         )
     )
+    if bounded.truncated:
+        warnings.append(
+            _record(
+                source_path,
+                source_hash,
+                "file truncated at extraction byte limit",
+                1,
+                max(1, len(lines)),
+                warning_type="byte_limit_truncated",
+                inspected_byte_count=bounded.inspected_byte_count,
+                omitted_byte_count=bounded.omitted_byte_count,
+            )
+        )
     return previews, diagnostics, warnings, redactions
 
 

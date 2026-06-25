@@ -20,7 +20,7 @@ def load(path: Path) -> Any:
     try:
         with path.open(encoding="utf-8") as handle:
             return yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise YamlAdapterError(str(exc)) from exc
 
 

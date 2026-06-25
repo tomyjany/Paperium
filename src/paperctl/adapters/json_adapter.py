@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+import re
 from typing import Any
 
 from paperctl._support.redaction import redact_value_for_key
@@ -10,6 +11,7 @@ from paperctl._support.redaction import redact_value_for_key
 
 ADAPTER_NAME = "json"
 ADAPTER_VERSION = "1"
+ARRAY_INDEX_PATTERN = re.compile(r"0|[1-9][0-9]*")
 
 
 class JsonAdapterError(ValueError):
@@ -20,7 +22,7 @@ def load(path: Path) -> Any:
     try:
         with path.open(encoding="utf-8") as handle:
             return json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise JsonAdapterError(str(exc)) from exc
 
 
@@ -38,10 +40,9 @@ def resolve_pointer(document: Any, pointer: str) -> Any:
             current = current[part]
             continue
         if isinstance(current, list):
-            try:
-                index = int(part)
-            except ValueError as exc:
-                raise KeyError(pointer) from exc
+            if ARRAY_INDEX_PATTERN.fullmatch(part) is None:
+                raise KeyError(pointer)
+            index = int(part)
             try:
                 current = current[index]
             except IndexError as exc:

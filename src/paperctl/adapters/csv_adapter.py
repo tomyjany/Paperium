@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import io
 import math
 from pathlib import Path
 from typing import Any
 
+from paperctl.adapters._text import read_utf8
 from paperctl._support.redaction import redact_value_for_key
 
 
@@ -18,6 +20,7 @@ def extract(
     source_path: str,
     source_hash: str,
     preview_rows: int,
+    max_bytes: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int]:
     previews: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
@@ -27,43 +30,59 @@ def extract(
     non_finite_counts: dict[str, int] = {}
     row_count = 0
     try:
-        with path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            for index, row in enumerate(reader, start=1):
-                row_count = index
-                if index <= preview_rows:
-                    redacted_row: dict[str, str] = {}
-                    for key, value in row.items():
-                        redacted_value, count = redact_value_for_key(key or "", value or "")
-                        redactions += count
-                        redacted_row[key] = str(redacted_value)
-                    previews.append(
-                        _record(
-                            source_path, source_hash, f"row {index}: {redacted_row}", index, index
-                        )
-                    )
+        bounded = read_utf8(path, max_bytes=max_bytes)
+        reader = csv.DictReader(io.StringIO(bounded.text, newline=""))
+        for index, row in enumerate(reader, start=1):
+            row_count = index
+            if index <= preview_rows:
+                redacted_row: dict[str, str] = {}
                 for key, value in row.items():
-                    try:
-                        numeric_value = float(value)
-                    except (TypeError, ValueError):
-                        pass
+                    redacted_value, count = redact_value_for_key(key or "", value or "")
+                    redactions += count
+                    redacted_row[key] = str(redacted_value)
+                previews.append(
+                    _record(source_path, source_hash, f"row {index}: {redacted_row}", index, index)
+                )
+            for key, value in row.items():
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    if math.isfinite(numeric_value):
+                        numeric_columns.setdefault(key, []).append(numeric_value)
                     else:
-                        if math.isfinite(numeric_value):
-                            numeric_columns.setdefault(key, []).append(numeric_value)
-                        else:
-                            non_finite_counts[key] = non_finite_counts.get(key, 0) + 1
-                            warnings.append(
-                                _record(
-                                    source_path,
-                                    source_hash,
-                                    f"non-finite numeric value omitted from column {key}",
-                                    index + 1,
-                                    index + 1,
-                                    warning_type="non_finite_numeric",
-                                    column=key,
-                                    numeric_value_kind=_non_finite_kind(numeric_value),
-                                )
+                        non_finite_counts[key] = non_finite_counts.get(key, 0) + 1
+                        warnings.append(
+                            _record(
+                                source_path,
+                                source_hash,
+                                f"non-finite numeric value omitted from column {key}",
+                                index + 1,
+                                index + 1,
+                                warning_type="non_finite_numeric",
+                                column=key,
+                                numeric_value_kind=_non_finite_kind(numeric_value),
                             )
+                        )
+        if bounded.truncated:
+            warnings.append(
+                _record(
+                    source_path,
+                    source_hash,
+                    "file truncated at extraction byte limit",
+                    1,
+                    max(1, row_count + 1),
+                    warning_type="byte_limit_truncated",
+                    inspected_byte_count=bounded.inspected_byte_count,
+                    omitted_byte_count=bounded.omitted_byte_count,
+                )
+            )
+    except UnicodeDecodeError as exc:
+        diagnostics.append(
+            _record(source_path, source_hash, f"could not decode CSV as UTF-8: {exc}", 1, 1)
+        )
+        return previews, diagnostics, warnings, redactions
     except OSError as exc:
         diagnostics.append(_record(source_path, source_hash, f"could not read CSV: {exc}", 1, 1))
         return previews, diagnostics, warnings, redactions
