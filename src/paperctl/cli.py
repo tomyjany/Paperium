@@ -6,6 +6,7 @@ from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_co
 from paperctl.discovery import DiscoveryError, discover
 from paperctl.inventory import InventoryError, inventory_all, load_manifest
 from paperctl.normalize import NormalizeError, normalize_all
+from paperctl.rendering import RenderError, render
 
 
 SUCCESS = 0
@@ -88,6 +89,20 @@ def main(argv: list[str] | None = None) -> int:
             f"evidence packets: {result.created} created, "
             f"{result.replaced} replaced, {result.unchanged} unchanged"
         )
+        return SUCCESS
+    if args.command == "render":
+        try:
+            config = load_config(repo)
+            result = render(repo, config, args.force)
+        except (ConfigError, RenderError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        verb = "unchanged" if result.status == "unchanged" else "wrote"
+        print(f"{verb} {result.draft_path}")
+        print(f"{verb} {result.render_state_path}")
+        print(f"rendered {result.experiment_count} experiments")
+        print(f"known publication blockers: {result.blocker_count}")
+        print("Milestone 1 render never writes PAPER.md")
         return SUCCESS
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
