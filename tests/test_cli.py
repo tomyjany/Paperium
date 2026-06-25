@@ -28,11 +28,11 @@ def test_console_script_shows_help():
 
 def test_placeholder_command_returns_invalid_invocation():
     result = subprocess.run(
-        [sys.executable, "-m", "paperctl", "inventory"],
+        [sys.executable, "-m", "paperctl", "normalize"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
     )
     assert result.returncode == 4
-    assert "command not implemented yet: inventory" in result.stderr
+    assert "command not implemented yet: normalize" in result.stderr

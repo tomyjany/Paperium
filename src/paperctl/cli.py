@@ -4,6 +4,7 @@ import sys
 
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
 from paperctl.discovery import DiscoveryError, discover
+from paperctl.inventory import InventoryError, inventory_all, load_manifest
 
 
 SUCCESS = 0
@@ -57,6 +58,21 @@ def main(argv: list[str] | None = None) -> int:
             return DETERMINISTIC_FAILURE
         print(f"wrote {result.path}")
         print(f"discovered {result.experiment_count} experiments")
+        return SUCCESS
+    if args.command == "inventory":
+        try:
+            config = load_config(repo)
+            manifest = load_manifest(repo, config)
+            result = inventory_all(repo, config, manifest, args.force)
+        except (ConfigError, InventoryError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        print(f"read {result.manifest_path}")
+        print(f"inventoried {result.experiment_count} experiments")
+        print(
+            f"inventory artifacts: {result.created} created, "
+            f"{result.replaced} replaced, {result.unchanged} unchanged"
+        )
         return SUCCESS
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
