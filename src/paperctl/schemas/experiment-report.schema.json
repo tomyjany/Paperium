@@ -25,6 +25,49 @@
     "value_type": {
       "enum": ["string", "number", "integer", "boolean", "null"]
     },
+    "typed_value": {
+      "allOf": [
+        {
+          "if": {
+            "properties": { "value_type": { "const": "string" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "string" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "number" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "number" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "integer" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "integer" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "boolean" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "boolean" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "null" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "null" } } }
+        }
+      ]
+    },
+    "json_pointer": {
+      "type": "string",
+      "pattern": "^(|/.*)$"
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
@@ -32,7 +75,7 @@
       "properties": {
         "path": { "$ref": "#/$defs/relative_path" },
         "selector_type": { "const": "json_pointer" },
-        "selector": { "type": "string" }
+        "selector": { "$ref": "#/$defs/json_pointer" }
       }
     },
     "canonical_fact": {
@@ -45,7 +88,8 @@
         "value_type": { "$ref": "#/$defs/value_type" },
         "unit": { "type": ["string", "null"] },
         "source": { "$ref": "#/$defs/source" }
-      }
+      },
+      "allOf": [{ "$ref": "#/$defs/typed_value" }]
     }
   }
 }

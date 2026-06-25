@@ -100,6 +100,45 @@
     "value_type": {
       "enum": ["string", "number", "integer", "boolean", "null"]
     },
+    "typed_value": {
+      "allOf": [
+        {
+          "if": {
+            "properties": { "value_type": { "const": "string" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "string" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "number" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "number" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "integer" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "integer" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "boolean" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "boolean" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "null" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "null" } } }
+        }
+      ]
+    },
     "json_pointer_source": {
       "type": "object",
       "additionalProperties": false,
@@ -115,7 +154,7 @@
         "path": { "$ref": "#/$defs/relative_path" },
         "source_hash": { "$ref": "#/$defs/hash" },
         "selector_type": { "const": "json_pointer" },
-        "selector": { "type": "string" },
+        "selector": { "$ref": "#/$defs/json_pointer" },
         "adapter": { "type": "string" },
         "adapter_version": { "type": "string" }
       }
@@ -161,7 +200,23 @@
         "line_end": { "type": ["integer", "null"], "minimum": 1 },
         "adapter": { "type": "string" },
         "adapter_version": { "type": "string" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "selector_type": { "const": "json_pointer" } },
+            "required": ["selector_type"]
+          },
+          "then": {
+            "required": ["selector"],
+            "properties": { "selector": { "$ref": "#/$defs/json_pointer" } }
+          }
+        }
+      ]
+    },
+    "json_pointer": {
+      "type": "string",
+      "pattern": "^(|/.*)$"
     },
     "canonical_fact": {
       "type": "object",
@@ -173,7 +228,8 @@
         "value_type": { "$ref": "#/$defs/value_type" },
         "unit": { "type": ["string", "null"] },
         "source": { "$ref": "#/$defs/value_source" }
-      }
+      },
+      "allOf": [{ "$ref": "#/$defs/typed_value" }]
     },
     "observed_value": {
       "type": "object",
@@ -184,7 +240,8 @@
         "value_type": { "$ref": "#/$defs/value_type" },
         "unit": { "type": ["string", "null"] },
         "source": { "$ref": "#/$defs/value_source" }
-      }
+      },
+      "allOf": [{ "$ref": "#/$defs/typed_value" }]
     },
     "source_record": {
       "type": "object",

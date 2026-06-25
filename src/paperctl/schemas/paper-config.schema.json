@@ -81,6 +81,10 @@
       "minLength": 1,
       "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
     },
+    "json_pointer": {
+      "type": "string",
+      "pattern": "^(|/.*)$"
+    },
     "canonical_fact_mapping": {
       "type": "object",
       "additionalProperties": false,
@@ -89,7 +93,7 @@
         "fact_id": { "type": "string", "minLength": 1 },
         "source": { "$ref": "#/$defs/relative_path" },
         "selector_type": { "const": "json_pointer" },
-        "selector": { "type": "string" },
+        "selector": { "$ref": "#/$defs/json_pointer" },
         "expected_type": {
           "enum": ["string", "number", "integer", "boolean", "null", "object", "array"]
         },

@@ -49,6 +49,69 @@ def _strict_json_source(**overrides):
     return source
 
 
+def _experiment_report(**fact_overrides):
+    fact = {
+        "fact_id": "measured_throughput",
+        "value": 13.585,
+        "value_type": "number",
+        "unit": "pages_per_second",
+        "source": {
+            "path": "outputs/hpi_2wpg_summary.json",
+            "selector_type": "json_pointer",
+            "selector": "/primary_slice/pages_per_second",
+        },
+    }
+    fact.update(fact_overrides)
+    return {
+        "schema_version": 1,
+        "execution_status": "completed",
+        "canonical_facts": [fact],
+    }
+
+
+def _paper_config(selector="/metrics/pages_per_second"):
+    return {
+        "schema_version": 1,
+        "questions": {
+            "root": "questions",
+            "pattern": "q*",
+            "experiments_directory": "experiments",
+        },
+        "paper": {
+            "work_directory": "paper/work",
+            "draft_output": "PAPER.draft.md",
+            "final_output": "PAPER.md",
+            "audit_report": "paper/PAPER.audit.json",
+        },
+        "evidence": {
+            "default_canonical_artifacts": ["outputs/experiment_report.json"],
+            "canonical_facts": {
+                "questions/q001-throughput/experiments/exp001-baseline": [
+                    {
+                        "fact_id": "measured_throughput",
+                        "source": "outputs/hpi_2wpg_summary.json",
+                        "selector_type": "json_pointer",
+                        "selector": selector,
+                        "expected_type": "number",
+                        "unit": "pages_per_second",
+                    }
+                ]
+            },
+            "extraction_limits": {
+                "maximum_file_bytes": 10000000,
+                "maximum_scalar_observations_per_file": 200,
+                "maximum_nesting_depth": 12,
+                "preview_rows": 20,
+                "log_head_lines": 100,
+                "log_tail_lines": 100,
+            },
+        },
+        "audit": {
+            "default_stage": "publication",
+        },
+    }
+
+
 def test_packaged_schemas_load_through_importlib_resources():
     from importlib import resources
 
@@ -172,6 +235,72 @@ def test_evidence_observed_values_require_full_selector_provenance():
         validate_artifact("evidence-packet.schema.json", packet)
 
 
+def test_evidence_canonical_fact_value_type_must_match_value():
+    from paperctl._support.schema import validate_artifact
+
+    packet = _evidence_packet(
+        canonical_facts=[
+            {
+                "fact_id": "measured_throughput",
+                "value": "13.585",
+                "value_type": "number",
+                "unit": "pages_per_second",
+                "source": _strict_json_source(),
+            }
+        ]
+    )
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+    packet["canonical_facts"][0]["value"] = 13.585
+    packet["canonical_facts"][0]["value_type"] = "integer"
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_evidence_observed_value_type_must_match_value():
+    from paperctl._support.schema import validate_artifact
+
+    packet = _evidence_packet(
+        observed_values=[
+            {
+                "value": "13.585",
+                "value_type": "number",
+                "unit": "pages_per_second",
+                "source": _strict_json_source(),
+            }
+        ]
+    )
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+    packet["observed_values"][0]["value"] = 13.585
+    packet["observed_values"][0]["value_type"] = "integer"
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_evidence_json_pointer_selector_must_be_empty_or_start_with_slash():
+    from paperctl._support.schema import validate_artifact
+
+    packet = _evidence_packet(
+        canonical_facts=[
+            {
+                "fact_id": "measured_throughput",
+                "value": 13.585,
+                "value_type": "number",
+                "unit": "pages_per_second",
+                "source": _strict_json_source(selector=""),
+            }
+        ]
+    )
+    validate_artifact("evidence-packet.schema.json", packet)
+
+    packet["canonical_facts"][0]["source"]["selector"] = "metrics/pages_per_second"
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+
 def test_inventory_regular_files_require_byte_size_and_sha256():
     from paperctl._support.schema import validate_artifact
 
@@ -206,25 +335,56 @@ def test_inventory_regular_files_require_byte_size_and_sha256():
 def test_experiment_report_schema_is_a_source_contract_without_artifact_type():
     from paperctl._support.schema import validate_artifact
 
-    report = {
-        "schema_version": 1,
-        "execution_status": "completed",
-        "canonical_facts": [
-            {
-                "fact_id": "measured_throughput",
-                "value": 13.585,
-                "value_type": "number",
-                "unit": "pages_per_second",
-                "source": {
+    validate_artifact("experiment-report.schema.json", _experiment_report())
+
+
+def test_experiment_report_value_type_must_match_value():
+    from paperctl._support.schema import validate_artifact
+
+    with pytest.raises(ValidationError):
+        validate_artifact(
+            "experiment-report.schema.json",
+            _experiment_report(value="13.585", value_type="number"),
+        )
+
+    with pytest.raises(ValidationError):
+        validate_artifact(
+            "experiment-report.schema.json",
+            _experiment_report(value=13.585, value_type="integer"),
+        )
+
+
+def test_json_pointer_selectors_must_be_empty_or_start_with_slash():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact(
+        "experiment-report.schema.json",
+        _experiment_report(
+            source={
+                "path": "outputs/hpi_2wpg_summary.json",
+                "selector_type": "json_pointer",
+                "selector": "",
+            }
+        ),
+    )
+    with pytest.raises(ValidationError):
+        validate_artifact(
+            "experiment-report.schema.json",
+            _experiment_report(
+                source={
                     "path": "outputs/hpi_2wpg_summary.json",
                     "selector_type": "json_pointer",
-                    "selector": "/primary_slice/pages_per_second",
-                },
-            }
-        ],
-    }
+                    "selector": "metrics/pages_per_second",
+                }
+            ),
+        )
 
-    validate_artifact("experiment-report.schema.json", report)
+    validate_artifact("paper-config.schema.json", _paper_config(selector=""))
+    with pytest.raises(ValidationError):
+        validate_artifact(
+            "paper-config.schema.json",
+            _paper_config(selector="metrics/pages_per_second"),
+        )
 
 
 def test_dump_json_bytes_sorts_keys_and_ends_with_newline():
@@ -250,6 +410,23 @@ def test_write_json_atomic_uses_deterministic_encoding(tmp_path):
     write_json_atomic(path, {"z": 1, "a": 2})
 
     assert path.read_bytes() == b'{"a":2,"z":1}\n'
+
+
+def test_write_json_atomic_removes_temp_file_when_fsync_fails(tmp_path, monkeypatch):
+    from paperctl._support import jsonio
+
+    path = tmp_path / "data.json"
+
+    def fail_fsync(_file_descriptor):
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr(jsonio.os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError):
+        jsonio.write_json_atomic(path, {"a": 1})
+
+    assert not path.exists()
+    assert list(tmp_path.glob(".data.json.*.tmp")) == []
 
 
 def test_sha256_helpers_use_lowercase_prefixed_hex(tmp_path):
