@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from paperctl.adapters._text import read_utf8
-from paperctl._support.redaction import redact_nested_value, redact_text
+from paperctl._support.redaction import key_is_secret_like, redact_nested_value, redact_text
 
 
 ADAPTER_NAME = "jsonl"
@@ -59,6 +59,8 @@ def extract(
             previews.append(_record(source_path, source_hash, rendered, line_number, line_number))
         if isinstance(value, dict):
             for key, child in value.items():
+                if key_is_secret_like(key):
+                    continue
                 if isinstance(child, int | float) and not isinstance(child, bool):
                     numeric_value = float(child)
                     if math.isfinite(numeric_value):

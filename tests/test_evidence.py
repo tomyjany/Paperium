@@ -948,6 +948,52 @@ def test_csv_and_jsonl_previews_redact_secret_columns_and_keys(tmp_path):
     assert "sk-csv-key" not in json.dumps(redaction_warnings, sort_keys=True)
 
 
+def test_csv_and_jsonl_secret_numeric_fields_are_not_summarized(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp032-secret-numeric-diagnostics")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "table.csv").write_text(
+        "name,password,score\nalpha,871923451,1.5\nbeta,619283745,2.5\n",
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "events.jsonl").write_text(
+        '{"api_key": 248613579, "score": 1}\n{"api_key": 975312468, "score": 2}\n',
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp032-secret-numeric-diagnostics")
+    serialized = json.dumps(packet, sort_keys=True)
+    for secret_value in ("871923451", "619283745", "248613579", "975312468"):
+        assert secret_value not in serialized
+    assert packet["counts"]["redaction_count"] == 4
+    assert not any(
+        diagnostic.get("calculation_label") == "csv_numeric_column_summary"
+        and diagnostic.get("column") == "password"
+        for diagnostic in packet["diagnostics"]
+    )
+    assert not any(
+        diagnostic.get("calculation_label") == "jsonl_numeric_field_summary"
+        and diagnostic.get("field") == "api_key"
+        for diagnostic in packet["diagnostics"]
+    )
+    assert any(
+        diagnostic.get("calculation_label") == "csv_numeric_column_summary"
+        and diagnostic.get("column") == "score"
+        and diagnostic["summary"] == {"count": 2, "max": 2.5, "min": 1.5}
+        for diagnostic in packet["diagnostics"]
+    )
+    assert any(
+        diagnostic.get("calculation_label") == "jsonl_numeric_field_summary"
+        and diagnostic.get("field") == "score"
+        and diagnostic["summary"] == {"count": 2, "max": 2.0, "min": 1.0}
+        for diagnostic in packet["diagnostics"]
+    )
+
+
 def test_secret_like_canonical_redaction_records_warning_without_secret_value(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     experiment = _add_experiment(repo, "exp037-secret-canonical-warning")

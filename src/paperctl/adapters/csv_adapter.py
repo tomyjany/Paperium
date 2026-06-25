@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from paperctl.adapters._text import read_utf8
-from paperctl._support.redaction import redact_value_for_key
+from paperctl._support.redaction import key_is_secret_like, redact_value_for_key
 
 
 ADAPTER_NAME = "csv"
@@ -50,6 +50,8 @@ def extract(
                     )
                 )
             for key, value in row.items():
+                if key_is_secret_like(key or ""):
+                    continue
                 try:
                     numeric_value = float(value)
                 except (TypeError, ValueError):
