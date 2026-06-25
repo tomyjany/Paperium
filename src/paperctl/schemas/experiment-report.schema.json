@@ -17,7 +17,7 @@
     "relative_path": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
     },
     "scalar": {
       "type": ["string", "number", "integer", "boolean", "null"]

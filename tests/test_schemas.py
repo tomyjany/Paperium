@@ -112,6 +112,25 @@ def _paper_config(selector="/metrics/pages_per_second"):
     }
 
 
+def _manifest():
+    return {
+        "schema_version": 1,
+        "artifact_type": "manifest",
+        "experiments": [
+            {
+                "question_ref": "q001",
+                "question_path": "questions/q001-throughput",
+                "question_readme_path": "questions/q001-throughput/README.md",
+                "question_readme_sha256": "sha256:" + "a" * 64,
+                "experiment_ref": "exp001",
+                "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
+                "inventory_path": "paper/work/inventories/questions/q001-throughput/experiments/exp001-baseline.json",
+                "evidence_path": "paper/work/evidence/questions/q001-throughput/experiments/exp001-baseline.json",
+            }
+        ],
+    }
+
+
 def test_packaged_schemas_load_through_importlib_resources():
     from importlib import resources
 
@@ -154,28 +173,29 @@ def test_packaged_schemas_are_valid_json_schemas():
 def test_manifest_schema_excludes_status_and_disposition_fields():
     from paperctl._support.schema import validate_artifact
 
-    manifest = {
-        "schema_version": 1,
-        "artifact_type": "manifest",
-        "experiments": [
-            {
-                "question_ref": "q001",
-                "question_path": "questions/q001-throughput",
-                "question_readme_path": "questions/q001-throughput/README.md",
-                "question_readme_sha256": "sha256:" + "a" * 64,
-                "experiment_ref": "exp001",
-                "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
-                "inventory_path": "paper/work/inventories/questions/q001-throughput/experiments/exp001-baseline.json",
-                "evidence_path": "paper/work/evidence/questions/q001-throughput/experiments/exp001-baseline.json",
-            }
-        ],
-    }
+    manifest = _manifest()
 
     validate_artifact("manifest.schema.json", manifest)
 
     manifest["experiments"][0]["execution_status"] = "completed"
     with pytest.raises(ValidationError):
         validate_artifact("manifest.schema.json", manifest)
+
+
+def test_manifest_relative_paths_must_be_posix_repo_relative():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("manifest.schema.json", _manifest())
+
+    for invalid_path in [
+        "questions\\q001\\experiments\\exp001",
+        "C:\\repo\\exp",
+    ]:
+        manifest = _manifest()
+        manifest["experiments"][0]["experiment_path"] = invalid_path
+
+        with pytest.raises(ValidationError):
+            validate_artifact("manifest.schema.json", manifest)
 
 
 def test_evidence_packet_schema_has_closed_reason_codes_and_status_fields():
@@ -188,6 +208,21 @@ def test_evidence_packet_schema_has_closed_reason_codes_and_status_fields():
     packet["reason_codes"] = ["made_up_reason"]
     with pytest.raises(ValidationError):
         validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_evidence_packet_relative_paths_must_be_posix_repo_relative():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("evidence-packet.schema.json", _evidence_packet())
+
+    for invalid_path in [
+        "questions\\q001\\experiments\\exp001",
+        "C:\\repo\\exp",
+    ]:
+        packet = _evidence_packet(experiment_path=invalid_path)
+
+        with pytest.raises(ValidationError):
+            validate_artifact("evidence-packet.schema.json", packet)
 
 
 def test_evidence_canonical_facts_require_full_selector_provenance():
