@@ -948,6 +948,41 @@ def test_csv_and_jsonl_previews_redact_secret_columns_and_keys(tmp_path):
     assert "sk-csv-key" not in json.dumps(redaction_warnings, sort_keys=True)
 
 
+def test_raw_text_previews_redact_quoted_json_style_secret_assignments(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp043-json-style-secret-previews")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "events.jsonl").write_text(
+        '{"api_key": "sk-jsonl-preview-secret",\n',
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "notes.md").write_text(
+        '# {"token": "sk-markdown-preview-secret",\n',
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "run.log").write_text(
+        'INFO payload={"access_key": "sk-log-preview-secret", "ok": true}\n',
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp043-json-style-secret-previews")
+    serialized = json.dumps(packet, sort_keys=True)
+    assert "sk-jsonl-preview-secret" not in serialized
+    assert "sk-markdown-preview-secret" not in serialized
+    assert "sk-log-preview-secret" not in serialized
+    preview_messages = {
+        Path(preview["source"]["path"]).name: preview["message"] for preview in packet["previews"]
+    }
+    assert preview_messages["events.jsonl"] == '{"api_key": "[REDACTED]",'
+    assert "[REDACTED]" in preview_messages["notes.md"]
+    assert "[REDACTED]" in preview_messages["run.log"]
+    assert packet["counts"]["redaction_count"] == 3
+
+
 def test_csv_and_jsonl_secret_numeric_fields_are_not_summarized(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     experiment = _add_bare_experiment(repo, "exp032-secret-numeric-diagnostics")
@@ -1020,6 +1055,118 @@ def test_secret_like_canonical_redaction_records_warning_without_secret_value(tm
     assert len(warnings) == 1
     assert warnings[0]["source"]["selector"] == "/api_key"
     assert warnings[0]["redaction_count"] == 1
+
+
+def test_secret_like_canonical_conflicts_compare_raw_values_without_leaking(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp044-secret-canonical-conflict")
+    _write_json(experiment / "outputs" / "a.json", {"api_key": "sk-conflict-secret-a"})
+    _write_json(experiment / "outputs" / "b.json", {"api_key": "sk-conflict-secret-b"})
+    _write_json(
+        experiment / "outputs" / "experiment_report.json",
+        {
+            "schema_version": 1,
+            "canonical_facts": [
+                {
+                    "fact_id": "api_key",
+                    "value": "sk-conflict-secret-a",
+                    "value_type": "string",
+                    "unit": None,
+                    "source": {
+                        "path": "outputs/a.json",
+                        "selector_type": "json_pointer",
+                        "selector": "/api_key",
+                    },
+                }
+            ],
+        },
+    )
+    config = _load_config(repo)
+    config["evidence"]["canonical_facts"][
+        "questions/q001-throughput/experiments/exp044-secret-canonical-conflict"
+    ] = [
+        {
+            "fact_id": "api_key",
+            "source": "outputs/b.json",
+            "selector_type": "json_pointer",
+            "selector": "/api_key",
+            "expected_type": "string",
+            "unit": None,
+        }
+    ]
+    _write_config(repo, config)
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp044-secret-canonical-conflict")
+    serialized = json.dumps(packet, sort_keys=True)
+    assert "sk-conflict-secret-a" not in serialized
+    assert "sk-conflict-secret-b" not in serialized
+    assert packet["evidence_status"] == "conflicting"
+    assert packet["preanalysis_disposition"] == "needs_human_review"
+    assert "canonical_conflict" in packet["reason_codes"]
+    assert packet["conflicts"] == [
+        {
+            "reason_code": "canonical_conflict",
+            "fact_id": "api_key",
+            "sources": [fact["source"] for fact in packet["canonical_facts"]],
+        }
+    ]
+    assert {fact["value"] for fact in packet["canonical_facts"]} == {"[REDACTED]"}
+
+
+def test_secret_like_canonical_same_raw_value_dedupes_without_conflict(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp045-secret-canonical-same-value")
+    _write_json(experiment / "outputs" / "a.json", {"api_key": "sk-same-secret"})
+    _write_json(experiment / "outputs" / "b.json", {"api_key": "sk-same-secret"})
+    _write_json(
+        experiment / "outputs" / "experiment_report.json",
+        {
+            "schema_version": 1,
+            "canonical_facts": [
+                {
+                    "fact_id": "api_key",
+                    "value": "sk-same-secret",
+                    "value_type": "string",
+                    "unit": None,
+                    "source": {
+                        "path": "outputs/a.json",
+                        "selector_type": "json_pointer",
+                        "selector": "/api_key",
+                    },
+                }
+            ],
+        },
+    )
+    config = _load_config(repo)
+    config["evidence"]["canonical_facts"][
+        "questions/q001-throughput/experiments/exp045-secret-canonical-same-value"
+    ] = [
+        {
+            "fact_id": "api_key",
+            "source": "outputs/b.json",
+            "selector_type": "json_pointer",
+            "selector": "/api_key",
+            "expected_type": "string",
+            "unit": None,
+        }
+    ]
+    _write_config(repo, config)
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp045-secret-canonical-same-value")
+    serialized = json.dumps(packet, sort_keys=True)
+    assert "sk-same-secret" not in serialized
+    assert packet["evidence_status"] == "available"
+    assert "canonical_conflict" not in packet["reason_codes"]
+    assert len(packet["canonical_facts"]) == 1
+    assert packet["canonical_facts"][0]["value"] == "[REDACTED]"
 
 
 def test_json_yaml_observed_non_finite_numbers_are_warnings_not_values(tmp_path):

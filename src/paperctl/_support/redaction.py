@@ -10,7 +10,16 @@ SECRET_KEY_RE = re.compile(
 )
 ASSIGNMENT_SECRET_RE = re.compile(
     r"(?P<prefix>\b[\w.-]*(?:password|passwd|secret|token|api_key|apikey|access_key|private_key)"
-    r"[\w.-]*\s*[:=]\s*)(?P<quote>['\"]?)(?P<value>[^\s,'\"]+)(?P=quote)",
+    r"[\w.-]*\s*[:=]\s*)"
+    r"(?:(?P<quote>['\"])(?P<quoted_value>[^\r\n'\"]*)(?P=quote)|(?P<value>[^\s,'\"]+))",
+    re.IGNORECASE,
+)
+QUOTED_KEY_SECRET_RE = re.compile(
+    r"(?P<prefix>(?P<key_quote>['\"])[\w.-]*"
+    r"(?:password|passwd|secret|token|api_key|apikey|access_key|private_key)"
+    r"[\w.-]*(?P=key_quote)\s*:\s*)"
+    r"(?:(?P<quote>['\"])(?P<quoted_value>[^\r\n'\"]*)(?P=quote)|"
+    r"(?P<value>[^\s,'\"\]}]+))",
     re.IGNORECASE,
 )
 REDACTED = "[REDACTED]"
@@ -28,9 +37,12 @@ def redact_text(text: str) -> tuple[str, int]:
     def replace(match: re.Match[str]) -> str:
         nonlocal count
         count += 1
-        return f"{match.group('prefix')}{match.group('quote')}{REDACTED}{match.group('quote')}"
+        quote = match.group("quote") or ""
+        return f"{match.group('prefix')}{quote}{REDACTED}{quote}"
 
-    return ASSIGNMENT_SECRET_RE.sub(replace, text), count
+    redacted = QUOTED_KEY_SECRET_RE.sub(replace, text)
+    redacted = ASSIGNMENT_SECRET_RE.sub(replace, redacted)
+    return redacted, count
 
 
 def redact_value_for_key(key: str, value: Any) -> tuple[Any, int]:

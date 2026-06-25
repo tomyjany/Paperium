@@ -41,6 +41,7 @@ from paperctl.inventory import (
 EVIDENCE_SCHEMA_VERSION = 1
 NORMALIZE_STAGE_VERSION = 1
 RECOGNIZED_REPORT_VERSION = 1
+CANONICAL_SIGNATURE_KEY = "__paperctl_raw_canonical_signature"
 
 
 class NormalizeError(ValueError):
@@ -255,7 +256,10 @@ def _build_packet(
             "warning_count": len(parts.warnings),
             "redaction_count": parts.redaction_count,
         },
-        "canonical_facts": sorted(parts.canonical_facts, key=_fact_sort_key),
+        "canonical_facts": sorted(
+            (_public_canonical_fact(fact) for fact in parts.canonical_facts),
+            key=_fact_sort_key,
+        ),
         "observed_values": sorted(parts.observed_values, key=_observed_sort_key),
         "previews": sorted(parts.previews, key=_record_sort_key),
         "diagnostics": sorted(parts.diagnostics, key=_record_sort_key),
@@ -311,6 +315,7 @@ def _apply_default_reports(
             if isinstance(result, str):
                 parts.reason_codes.add(result)
                 continue
+            result = _with_canonical_signature(result)
             result, redactions = _redact_canonical_fact(result)
             parts.redaction_count += redactions
             if redactions:
@@ -415,6 +420,7 @@ def _apply_configured_canonical_facts(
                 source_path, artifact["sha256"], mapping["selector"], artifact["kind"]
             ),
         }
+        fact = _with_canonical_signature(fact)
         fact, redactions = _redact_canonical_fact(fact)
         parts.redaction_count += redactions
         if redactions:
@@ -431,14 +437,7 @@ def _dedupe_canonical_facts(parts: PacketParts) -> None:
     for fact_id in sorted(grouped):
         facts = grouped[fact_id]
         signatures = {
-            canonical_json_hash(
-                {
-                    "value": fact["value"],
-                    "value_type": fact["value_type"],
-                    "unit": fact["unit"],
-                }
-            )
-            for fact in facts
+            fact.get(CANONICAL_SIGNATURE_KEY, _canonical_fact_signature(fact)) for fact in facts
         }
         if len(signatures) > 1:
             parts.reason_codes.add("canonical_conflict")
@@ -453,6 +452,26 @@ def _dedupe_canonical_facts(parts: PacketParts) -> None:
             continue
         canonical.append(sorted(facts, key=lambda fact: _source_sort_key(fact["source"]))[0])
     parts.canonical_facts = canonical
+
+
+def _with_canonical_signature(fact: dict[str, Any]) -> dict[str, Any]:
+    signed = dict(fact)
+    signed[CANONICAL_SIGNATURE_KEY] = _canonical_fact_signature(fact)
+    return signed
+
+
+def _canonical_fact_signature(fact: dict[str, Any]) -> str:
+    return canonical_json_hash(
+        {
+            "value": fact["value"],
+            "value_type": fact["value_type"],
+            "unit": fact["unit"],
+        }
+    )
+
+
+def _public_canonical_fact(fact: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in fact.items() if key != CANONICAL_SIGNATURE_KEY}
 
 
 def _extract_artifacts(
