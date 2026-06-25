@@ -201,13 +201,26 @@ def test_missing_questions_root_is_deterministic_failure_not_publication_block(t
     assert result.returncode == 2
     report = read_json(repo / AUDIT_PATH)
     assert report["deterministic_health"]["status"] == "failed"
-    assert report["publication_gate"]["status"] == "blocked"
+    assert report["publication_gate"] == {"status": "passed", "blockers": []}
+    assert report["publishable"] is False
     assert any(
         issue["code"] == "missing_questions_root"
         and issue["severity"] == "error"
         and "questions" in issue["message"]
         for issue in report["deterministic_health"]["issues"]
     )
+
+
+def test_deterministic_audit_failure_does_not_contaminate_publication_gate(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    report = read_json(repo / AUDIT_PATH)
+    assert report["deterministic_health"]["status"] == "failed"
+    assert report["publication_gate"] == {"status": "passed", "blockers": []}
+    assert report["publishable"] is False
 
 
 def test_audit_reports_missing_and_stale_prerequisites_without_rebuilding_them(tmp_path):
@@ -296,3 +309,81 @@ def test_audit_schema_records_deterministic_fingerprint_without_timestamps(tmp_p
     assert fingerprint["evidence_packet_sha256"] == [
         sha256_file(repo / entry["evidence_path"]) for entry in manifest["experiments"]
     ]
+
+
+def test_audit_rejects_repository_root_paper_md_report_without_touching_sentinel(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = "./PAPER.md"
+    _write_config_yaml(repo, config)
+    sentinel = (repo / FINAL_PATH).read_bytes()
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target repository-root PAPER.md" in result.stderr
+    assert (repo / FINAL_PATH).read_bytes() == sentinel
+
+
+def test_audit_rejects_report_collision_with_draft_output_without_writing(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = "./PAPER.draft.md"
+    _write_config_yaml(repo, config)
+    sentinel_path = repo / DRAFT_PATH
+    sentinel_path.write_text("protected draft sentinel\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target protected paper.draft_output" in result.stderr
+    assert sentinel_path.read_text(encoding="utf-8") == "protected draft sentinel\n"
+
+
+def test_audit_rejects_report_collision_with_final_output_without_touching_sentinel(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config_yaml(repo)
+    config["paper"]["final_output"] = "paper/final.md"
+    config["paper"]["audit_report"] = "./paper/final.md"
+    _write_config_yaml(repo, config)
+    sentinel_path = repo / "paper" / "final.md"
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    sentinel_path.write_text("protected final sentinel\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target protected paper.final_output" in result.stderr
+    assert sentinel_path.read_text(encoding="utf-8") == "protected final sentinel\n"
+
+
+def test_audit_rejects_report_collision_with_render_state_before_prerequisites(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = "paper/work/render-state.json"
+    _write_config_yaml(repo, config)
+    sentinel_path = repo / RENDER_STATE_PATH
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    sentinel_path.write_text("protected render-state sentinel\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target render state output" in result.stderr
+    assert sentinel_path.read_text(encoding="utf-8") == "protected render-state sentinel\n"
+    assert "missing discovery manifest" not in result.stderr
+
+
+def test_audit_rejects_symlinked_report_output_directory_component(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    (repo / "paper").mkdir(exist_ok=True)
+    (repo / "linked-output").symlink_to("paper", target_is_directory=True)
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = "linked-output/PAPER.audit.json"
+    _write_config_yaml(repo, config)
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report output path contains a symlink: linked-output" in result.stderr
+    assert not (repo / "paper" / "PAPER.audit.json").exists()

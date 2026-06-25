@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema import ValidationError
@@ -10,7 +10,7 @@ from jsonschema import ValidationError
 from paperctl._support.blockers import derive_publication_blockers
 from paperctl._support.hashing import canonical_json_hash, sha256_bytes, sha256_file
 from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
-from paperctl._support.paths import resolve_repo_relative_path
+from paperctl._support.paths import is_repo_relative_posix, resolve_repo_relative_path
 from paperctl._support.schema import validate_artifact
 from paperctl.inventory import InventoryError, _manifest_path, load_manifest
 from paperctl.normalize import NormalizeError, _build_packet, _load_fresh_inventory
@@ -44,10 +44,11 @@ def audit(repo: Path, config: dict[str, Any], stage: str | None = None) -> Audit
     if requested_stage not in {"deterministic", "publication"}:
         raise AuditError(f"invalid audit stage: {requested_stage}")
 
+    report_output = _resolve_audit_report_output(repo, config)
     context = _AuditContext(repo=repo, config=config)
     context.run()
     report = context.report(requested_stage)
-    _write_report(repo, config, report)
+    _write_report(config, report, report_output)
     return AuditResult(
         report_path=config["paper"]["audit_report"],
         stage=requested_stage,
@@ -92,9 +93,7 @@ class _AuditContext:
 
     def report(self, stage: str) -> dict[str, Any]:
         deterministic_status = "failed" if self.issues else "passed"
-        publication_status = (
-            "blocked" if deterministic_status == "failed" or self.blockers else "passed"
-        )
+        publication_status = "blocked" if self.blockers else "passed"
         publishable = deterministic_status == "passed" and publication_status == "passed"
         fingerprint = self._fingerprint(
             stage=stage,
@@ -411,13 +410,65 @@ class _AuditContext:
         self.issues.append(issue)
 
 
-def _write_report(repo: Path, config: dict[str, Any], report: dict[str, Any]) -> None:
+def _write_report(config: dict[str, Any], report: dict[str, Any], output_path: Path) -> None:
     report_path = config["paper"]["audit_report"]
     try:
-        output_path = resolve_repo_relative_path(repo, report_path)
         write_json_atomic(output_path, report)
     except OSError as exc:
         raise AuditError(f"could not write audit report: {report_path}: {exc}") from exc
+
+
+def _resolve_audit_report_output(repo: Path, config: dict[str, Any]) -> Path:
+    report_path = config["paper"]["audit_report"]
+    report_relative = _normalized_repo_relative_path(report_path, label="paper.audit_report")
+    if report_relative == "PAPER.md":
+        raise AuditError("paper.audit_report must not target repository-root PAPER.md")
+
+    protected_paths = [
+        (
+            config["paper"]["draft_output"],
+            "paper.audit_report must not target protected paper.draft_output",
+        ),
+        (
+            config["paper"]["final_output"],
+            "paper.audit_report must not target protected paper.final_output",
+        ),
+        (
+            _render_state_path(config),
+            "paper.audit_report must not target render state output",
+        ),
+    ]
+    for protected_path, message in protected_paths:
+        if report_relative == _normalized_repo_relative_path(
+            protected_path,
+            label="protected output",
+        ):
+            raise AuditError(message)
+    output_path = _resolve_report_output_path(repo, report_path)
+    if output_path.is_dir():
+        raise AuditError(f"paper.audit_report output path is a directory: {report_path}")
+    return output_path
+
+
+def _normalized_repo_relative_path(path: str, *, label: str) -> str:
+    if not is_repo_relative_posix(path):
+        raise AuditError(f"{label} path must be repo-relative POSIX: {path}")
+    return PurePosixPath(*PurePosixPath(path).parts).as_posix()
+
+
+def _resolve_report_output_path(repo: Path, path: str) -> Path:
+    parts = PurePosixPath(path).parts
+    current = repo
+    for index, part in enumerate(parts):
+        current = current / part
+        if current.is_symlink():
+            relative = current.relative_to(repo).as_posix()
+            if index == len(parts) - 1:
+                raise AuditError(f"paper.audit_report output path is a symlink: {path}")
+            raise AuditError(f"paper.audit_report output path contains a symlink: {relative}")
+        if not current.exists():
+            break
+    return repo / Path(*parts)
 
 
 def _with_blocker_messages(blockers: list[dict[str, Any]]) -> list[dict[str, Any]]:
