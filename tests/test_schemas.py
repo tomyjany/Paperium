@@ -434,6 +434,8 @@ def test_paper_config_canonical_fact_keys_must_be_relative_experiment_paths():
         "/absolute/experiment",
         "../escape",
         "questions/q001/../escape",
+        "questions\\q001\\experiments\\exp001",
+        "C:\\repo\\exp",
     ]:
         config = _paper_config()
         mappings = config["evidence"]["canonical_facts"]
