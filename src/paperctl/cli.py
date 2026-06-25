@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 from paperctl.audit import AuditError, audit
+from paperctl.build import BuildError, build
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
 from paperctl.discovery import DiscoveryError, discover
 from paperctl.inventory import InventoryError, inventory_all, load_manifest
@@ -105,6 +106,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"known publication blockers: {result.blocker_count}")
         print("Milestone 1 render never writes PAPER.md")
         return SUCCESS
+    if args.command == "build":
+        try:
+            config = load_config(repo)
+            result = build(repo, config, args.force)
+        except (ConfigError, BuildError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        print(f"discovery: {result.discovery.status}")
+        print(
+            f"inventory: {result.inventory.created} created, "
+            f"{result.inventory.replaced} replaced, {result.inventory.unchanged} unchanged"
+        )
+        print(
+            f"evidence: {result.normalize.created} created, "
+            f"{result.normalize.replaced} replaced, {result.normalize.unchanged} unchanged"
+        )
+        print(f"render: {result.render.status}")
+        print(f"deterministic build: {result.deterministic_status}")
+        print(f"draft: {result.draft_path}")
+        print(f"audit: {result.audit_path}")
+        print(f"publication: {_publication_summary(result.publication_blocker_codes)}")
+        return SUCCESS
     if args.command == "audit":
         try:
             config = load_config(repo)
@@ -129,3 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         return SUCCESS
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
+
+
+def _publication_summary(blocker_codes: list[str]) -> str:
+    if not blocker_codes:
+        return "passed"
+    return f"blocked by {', '.join(blocker_codes)}"
