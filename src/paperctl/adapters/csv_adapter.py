@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from paperctl._support.redaction import redact_text
+from paperctl._support.redaction import redact_value_for_key
 
 
 ADAPTER_NAME = "csv"
@@ -29,9 +29,9 @@ def extract(
                 if index <= preview_rows:
                     redacted_row: dict[str, str] = {}
                     for key, value in row.items():
-                        redacted_value, count = redact_text(value or "")
+                        redacted_value, count = redact_value_for_key(key or "", value or "")
                         redactions += count
-                        redacted_row[key] = redacted_value
+                        redacted_row[key] = str(redacted_value)
                     previews.append(
                         _record(
                             source_path, source_hash, f"row {index}: {redacted_row}", index, index

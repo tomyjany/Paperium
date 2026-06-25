@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -76,6 +76,7 @@ class PacketParts:
     reason_codes: set[str]
     redaction_count: int = 0
     execution_status: str = "unknown"
+    adapter_versions: dict[str, str] = field(default_factory=dict)
 
 
 def normalize_all(repo: Path, config: dict[str, Any], force: bool = False) -> NormalizeAllResult:
@@ -278,6 +279,7 @@ def _apply_default_reports(
             continue
         if artifact["file_type"] != "regular" or artifact["kind"] != "json":
             continue
+        _record_adapter(parts, "json")
         try:
             document = json_adapter.load(repo / report_path)
         except json_adapter.JsonAdapterError:
@@ -356,19 +358,19 @@ def _apply_configured_canonical_facts(
     excluded_observed_selectors: dict[str, set[str]],
 ) -> None:
     mappings = config["evidence"]["canonical_facts"].get(experiment_path, [])
-    seen_declarations: set[tuple[str, str, str]] = set()
+    seen_fact_ids: set[str] = set()
     for mapping in mappings:
         fact_id = mapping["fact_id"]
-        declaration_key = (fact_id, mapping["source"], mapping["selector"])
-        if declaration_key in seen_declarations:
+        if fact_id in seen_fact_ids:
             raise NormalizeError(
                 f"duplicate configured canonical fact id: {experiment_path}: {fact_id}"
             )
-        seen_declarations.add(declaration_key)
+        seen_fact_ids.add(fact_id)
         source_path = _validate_configured_source_path(repo, experiment_path, mapping["source"])
         artifact = artifact_by_relative.get(source_path)
         if artifact is None or artifact["file_type"] != "regular":
             raise NormalizeError(f"canonical source file does not exist: {source_path}")
+        _record_adapter(parts, "yaml" if artifact["kind"] == "yaml" else "json")
         try:
             document = _load_structured_source(repo / source_path, artifact["kind"])
             selected = json_adapter.resolve_pointer(document, mapping["selector"])
@@ -461,6 +463,7 @@ def _extract_artifacts(
                 parts.warnings.append(_none_record(artifact, "file exceeded extraction byte limit"))
                 parts.reason_codes.add("normalization_truncated")
                 continue
+            _record_adapter(parts, artifact["kind"])
             module = json_adapter if artifact["kind"] == "json" else yaml_adapter
             try:
                 document = module.load(path)
@@ -484,6 +487,7 @@ def _extract_artifacts(
                 parts.reason_codes.add("normalization_truncated")
             continue
         if artifact["kind"] == "csv":
+            _record_adapter(parts, "csv")
             previews, diagnostics, redactions = csv_adapter.extract(
                 path,
                 source_path=artifact["path"],
@@ -491,6 +495,7 @@ def _extract_artifacts(
                 preview_rows=limits["preview_rows"],
             )
         elif artifact["kind"] == "jsonl":
+            _record_adapter(parts, "jsonl")
             previews, diagnostics, redactions = jsonl_adapter.extract(
                 path,
                 source_path=artifact["path"],
@@ -498,6 +503,7 @@ def _extract_artifacts(
                 preview_rows=limits["preview_rows"],
             )
         elif artifact["kind"] == "markdown":
+            _record_adapter(parts, "markdown")
             previews, diagnostics, redactions = markdown_adapter.extract(
                 path,
                 source_path=artifact["path"],
@@ -505,6 +511,7 @@ def _extract_artifacts(
                 preview_lines=limits["log_head_lines"],
             )
         else:
+            _record_adapter(parts, "log")
             previews, diagnostics, redactions = log_adapter.extract(
                 path,
                 source_path=artifact["path"],
@@ -542,7 +549,10 @@ def _finalize_status(parts: PacketParts) -> None:
         parts.evidence_status = "missing"
         parts.reason_codes.add("no_usable_evidence")
     parts.preanalysis_disposition = (
-        "blocked" if blocker_codes.intersection(parts.reason_codes) else "analysis_candidate"
+        "blocked"
+        if blocker_codes.intersection(parts.reason_codes)
+        or parts.evidence_status in {"missing", "unsupported"}
+        else "analysis_candidate"
     )
 
 
@@ -581,11 +591,15 @@ def _evidence_fingerprint(
             ),
         ],
         extra_inputs={
-            "adapter_versions": ADAPTER_VERSIONS,
+            "adapter_versions": dict(sorted(parts.adapter_versions.items())),
             "canonical_fact_count": len(parts.canonical_facts),
             "reason_codes": sorted(parts.reason_codes),
         },
     )
+
+
+def _record_adapter(parts: PacketParts, adapter: str) -> None:
+    parts.adapter_versions[adapter] = ADAPTER_VERSIONS[adapter]
 
 
 def _relevant_config(config: dict[str, Any]) -> dict[str, Any]:

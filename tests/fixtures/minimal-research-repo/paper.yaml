@@ -21,12 +21,6 @@ evidence:
         unit: pages/s
     questions/q001-throughput/experiments/exp003-structured-conflict:
       - fact_id: throughput_pages_per_second
-        source: outputs/run-a.json
-        selector_type: json_pointer
-        selector: /metrics/throughput_pages_per_second
-        expected_type: number
-        unit: pages/s
-      - fact_id: throughput_pages_per_second
         source: outputs/run-b.json
         selector_type: json_pointer
         selector: /metrics/throughput_pages_per_second

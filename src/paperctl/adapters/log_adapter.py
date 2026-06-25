@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from paperctl._support.redaction import redact_text
+from paperctl._support.redaction import escape_markdown_text, redact_text
 
 
 ADAPTER_NAME = "log"
@@ -40,7 +40,15 @@ def extract(
         seen.add(line_number)
         redacted, count = redact_text(line)
         redactions += count
-        previews.append(_record(source_path, source_hash, redacted, line_number, line_number))
+        previews.append(
+            _record(
+                source_path,
+                source_hash,
+                escape_markdown_text(redacted),
+                line_number,
+                line_number,
+            )
+        )
     warning_count = sum(1 for line in lines if "warning" in line.lower())
     error_count = sum(1 for line in lines if "error" in line.lower())
     diagnostics.append(

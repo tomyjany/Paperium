@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from paperctl._support.redaction import redact_text
+from paperctl._support.redaction import redact_nested_value, redact_text
 
 
 ADAPTER_NAME = "jsonl"
@@ -26,16 +26,23 @@ def extract(
         with path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 text = line.rstrip("\n")
-                if line_number <= preview_rows:
-                    redacted, count = redact_text(text)
-                    redactions += count
-                    previews.append(
-                        _record(source_path, source_hash, redacted, line_number, line_number)
-                    )
                 try:
                     value = json.loads(text)
                 except json.JSONDecodeError:
+                    if line_number <= preview_rows:
+                        redacted, count = redact_text(text)
+                        redactions += count
+                        previews.append(
+                            _record(source_path, source_hash, redacted, line_number, line_number)
+                        )
                     continue
+                if line_number <= preview_rows:
+                    redacted_value, count = redact_nested_value(value)
+                    redactions += count
+                    rendered = json.dumps(redacted_value, sort_keys=True)
+                    previews.append(
+                        _record(source_path, source_hash, rendered, line_number, line_number)
+                    )
                 if isinstance(value, dict):
                     for key, child in value.items():
                         if isinstance(child, int | float) and not isinstance(child, bool):

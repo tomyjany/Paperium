@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "execution_status": "completed",
+  "canonical_facts": [
+    {
+      "fact_id": "throughput_pages_per_second",
+      "value": 11.1,
+      "value_type": "number",
+      "unit": "pages/s",
+      "source": {
+        "path": "outputs/run-a.json",
+        "selector_type": "json_pointer",
+        "selector": "/metrics/throughput_pages_per_second"
+      }
+    }
+  ]
+}

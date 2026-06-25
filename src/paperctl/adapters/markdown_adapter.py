@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from paperctl._support.redaction import redact_text
+from paperctl._support.redaction import escape_markdown_text, redact_text
 
 
 ADAPTER_NAME = "markdown"
@@ -29,16 +29,32 @@ def extract(
         return previews, diagnostics, redactions
 
     for line_number, line in enumerate(lines, start=1):
+        if len(previews) >= preview_lines:
+            break
         if line.lstrip().startswith("#"):
             redacted, count = redact_text(line)
             redactions += count
-            previews.append(_record(source_path, source_hash, redacted, line_number, line_number))
+            previews.append(
+                _record(
+                    source_path,
+                    source_hash,
+                    escape_markdown_text(redacted),
+                    line_number,
+                    line_number,
+                )
+            )
     if not previews and lines:
         excerpt = "\n".join(lines[:preview_lines])
         redacted, count = redact_text(excerpt)
         redactions += count
         previews.append(
-            _record(source_path, source_hash, redacted, 1, min(len(lines), preview_lines))
+            _record(
+                source_path,
+                source_hash,
+                escape_markdown_text(redacted),
+                1,
+                min(len(lines), preview_lines),
+            )
         )
     diagnostics.append(
         _record(source_path, source_hash, f"line_count={len(lines)}", 1, max(1, len(lines)))

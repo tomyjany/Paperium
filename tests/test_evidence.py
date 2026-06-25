@@ -59,6 +59,12 @@ def _add_experiment(repo: Path, name: str) -> Path:
     return experiment
 
 
+def _add_bare_experiment(repo: Path, name: str) -> Path:
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / name
+    experiment.mkdir(parents=True)
+    return experiment
+
+
 def _add_canonical_mapping(
     repo: Path,
     experiment_name: str,
@@ -276,6 +282,27 @@ def test_report_contract_errors_block_experiment_evidence(tmp_path):
     assert "unknown_experiment_report_version" not in missing_packet["reason_codes"]
 
 
+def test_missing_and_unsupported_only_evidence_block_preanalysis(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _add_bare_experiment(repo, "exp015-empty")
+    unsupported = _add_bare_experiment(repo, "exp016-unsupported-only")
+    (unsupported / "outputs").mkdir()
+    (unsupported / "outputs" / "model.bin").write_bytes(b"\x00\x01\x02")
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    empty_packet = _packet(repo, manifest, "exp015-empty")
+    unsupported_packet = _packet(repo, manifest, "exp016-unsupported-only")
+    assert empty_packet["evidence_status"] == "missing"
+    assert empty_packet["preanalysis_disposition"] == "blocked"
+    assert empty_packet["reason_codes"] == ["no_usable_evidence"]
+    assert unsupported_packet["evidence_status"] == "unsupported"
+    assert unsupported_packet["preanalysis_disposition"] == "blocked"
+    assert "unsupported_only" in unsupported_packet["reason_codes"]
+
+
 def test_canonical_conflicts_compare_value_type_and_unit_not_provenance(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     same = _add_experiment(repo, "exp015-same-canonical")
@@ -387,6 +414,46 @@ def test_user_configured_canonical_fact_errors_are_deterministic_configuration_f
         assert expected in result.stderr
 
 
+def test_duplicate_configured_fact_id_with_different_sources_is_configuration_failure(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp021-duplicate-configured-id")
+    _write_json(experiment / "outputs" / "a.json", {"metric": 7})
+    _write_json(experiment / "outputs" / "b.json", {"metric": 8})
+    config = _load_config(repo)
+    experiment_path = "questions/q001-throughput/experiments/exp021-duplicate-configured-id"
+    config["evidence"]["canonical_facts"][experiment_path] = [
+        {
+            "fact_id": "metric",
+            "source": "outputs/a.json",
+            "selector_type": "json_pointer",
+            "selector": "/metric",
+            "expected_type": "number",
+            "unit": "widgets",
+        },
+        {
+            "fact_id": "metric",
+            "source": "outputs/b.json",
+            "selector_type": "json_pointer",
+            "selector": "/metric",
+            "expected_type": "number",
+            "unit": "widgets",
+        },
+    ]
+    _write_config(repo, config)
+    _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 2
+    assert (
+        "duplicate configured canonical fact id: "
+        "questions/q001-throughput/experiments/exp021-duplicate-configured-id: metric"
+        in result.stderr
+    )
+
+
 def test_preview_only_markdown_and_logs_are_available_analysis_candidates(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     manifest = _run_prerequisites(repo)
@@ -424,6 +491,98 @@ def test_csv_and_jsonl_numeric_summaries_are_diagnostics_not_observed_values(tmp
     messages = [diagnostic["message"] for diagnostic in packet["diagnostics"]]
     assert any("numeric column score" in message for message in messages)
     assert any("numeric field score" in message for message in messages)
+
+
+def test_csv_and_jsonl_previews_redact_secret_columns_and_keys(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp031-secret-previews")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "table.csv").write_text(
+        "name,api_key,password\nalpha,sk-csv-key,hunter2\n",
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "events.jsonl").write_text(
+        '{"name": "alpha", "access_key": "ak-jsonl", "nested": {"token": "nested-token"}}\n',
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp031-secret-previews")
+    serialized = json.dumps(packet, sort_keys=True)
+    assert "sk-csv-key" not in serialized
+    assert "hunter2" not in serialized
+    assert "ak-jsonl" not in serialized
+    assert "nested-token" not in serialized
+    assert packet["counts"]["redaction_count"] == 4
+    assert serialized.count("[REDACTED]") >= 4
+
+
+def test_evidence_fingerprint_records_only_adapters_used_by_packet(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    json_only = _add_bare_experiment(repo, "exp032-json-only")
+    _write_json(json_only / "outputs" / "metrics.json", {"metric": 1})
+    csv_only = _add_bare_experiment(repo, "exp033-csv-only")
+    (csv_only / "outputs").mkdir()
+    (csv_only / "outputs" / "table.csv").write_text("name,score\nalpha,1\n", encoding="utf-8")
+    unsupported = _add_bare_experiment(repo, "exp034-unsupported-only")
+    (unsupported / "outputs").mkdir()
+    (unsupported / "outputs" / "model.bin").write_bytes(b"\x00\x01")
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    json_packet = _packet(repo, manifest, "exp032-json-only")
+    csv_packet = _packet(repo, manifest, "exp033-csv-only")
+    unsupported_packet = _packet(repo, manifest, "exp034-unsupported-only")
+    assert json_packet["fingerprint"]["extra_inputs"]["adapter_versions"] == {"json": "1"}
+    assert csv_packet["fingerprint"]["extra_inputs"]["adapter_versions"] == {"csv": "1"}
+    assert unsupported_packet["fingerprint"]["extra_inputs"]["adapter_versions"] == {}
+
+
+def test_markdown_and_log_previews_escape_untrusted_text_and_bound_heading_count(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp035-escaped-previews")
+    (experiment / "README.md").write_text(
+        "# First [link](https://example.test)\n"
+        "body\n"
+        "## Second *bold*\n"
+        "### Third should not be emitted\n",
+        encoding="utf-8",
+    )
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "run.log").write_text(
+        "# log heading\n[link](https://example.test)\nmiddle\n*tail*\n",
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp035-escaped-previews")
+    markdown_previews = [
+        preview
+        for preview in packet["previews"]
+        if preview["source"]["path"].endswith("/README.md")
+    ]
+    log_previews = [
+        preview
+        for preview in packet["previews"]
+        if preview["source"]["path"].endswith("/outputs/run.log")
+    ]
+    assert [preview["source"]["line_start"] for preview in markdown_previews] == [1, 3]
+    assert markdown_previews[0]["message"] == (r"\# First \[link\]\(https://example.test\)")
+    assert markdown_previews[1]["message"] == r"\#\# Second \*bold\*"
+    assert [preview["source"]["line_start"] for preview in log_previews] == [1, 2, 4]
+    assert log_previews[0]["message"] == r"\# log heading"
+    assert log_previews[1]["message"] == r"\[link\]\(https://example.test\)"
+    assert log_previews[2]["message"] == r"\*tail\*"
 
 
 def test_normalize_writes_one_packet_per_manifest_entry_at_mirrored_paths(tmp_path):
