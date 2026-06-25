@@ -409,12 +409,15 @@ def test_fixture_extraction_limits_parse_completed_report_but_keep_preview_cases
     )
 
     assert limits["maximum_file_bytes"] >= completed_report.stat().st_size
-    assert len((preview_experiment / "events.jsonl").read_text(encoding="utf-8").splitlines()) > (
-        limits["preview_rows"]
+    assert (
+        len((preview_experiment / "events.jsonl").read_text(encoding="utf-8").splitlines())
+        > (limits["preview_rows"])
     )
-    assert len((preview_experiment / "run.log").read_text(encoding="utf-8").splitlines()) > (
-        limits["log_head_lines"]
+    assert (
+        len((preview_experiment / "run.log").read_text(encoding="utf-8").splitlines())
+        > (limits["log_head_lines"])
     )
-    assert len((preview_experiment / "run.log").read_text(encoding="utf-8").splitlines()) > (
-        limits["log_tail_lines"]
+    assert (
+        len((preview_experiment / "run.log").read_text(encoding="utf-8").splitlines())
+        > (limits["log_tail_lines"])
     )

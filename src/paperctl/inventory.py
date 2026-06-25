@@ -380,8 +380,7 @@ def _validate_manifest_experiment_path_ancestors(repo: Path, path: str) -> None:
         if current.is_symlink():
             relative = current.relative_to(repo).as_posix()
             raise InventoryError(
-                "manifest experiment path contains a symlink: "
-                f"{path} (component: {relative})"
+                f"manifest experiment path contains a symlink: {path} (component: {relative})"
             )
         if not current.exists():
             break

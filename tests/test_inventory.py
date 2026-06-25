@@ -242,8 +242,7 @@ def test_manifest_symlinked_experiment_path_ancestor_is_rejected_before_inventor
     linked_component = "questions/q001-throughput/experiments"
     linked_experiment_path = f"{linked_component}/exp001-completed"
     assert any(
-        entry["experiment_path"] == linked_experiment_path
-        for entry in manifest["experiments"]
+        entry["experiment_path"] == linked_experiment_path for entry in manifest["experiments"]
     )
 
     result = _inventory(repo)
@@ -263,9 +262,7 @@ def test_inventory_rejects_existing_inventory_output_symlink_without_touching_ta
     repo = copy_fixture_repo(tmp_path)
     manifest = _discover(repo)
     entry = next(
-        entry
-        for entry in manifest["experiments"]
-        if entry["experiment_ref"] == "exp001-completed"
+        entry for entry in manifest["experiments"] if entry["experiment_ref"] == "exp001-completed"
     )
     target = repo / "paper" / "work" / "target-inventory.json"
     original_target_bytes = b'{"sentinel":true}\n'
