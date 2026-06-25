@@ -1,5 +1,22 @@
 import subprocess
 import sys
+from pathlib import Path
+import shutil
+
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _console_script_command() -> list[str]:
+    paperctl = shutil.which("paperctl")
+    if paperctl is not None:
+        return [paperctl]
+    uv = shutil.which("uv")
+    if uv is not None:
+        return [uv, "run", "--project", str(PROJECT_ROOT), "paperctl"]
+    pytest.skip("paperctl console script is not available")
 
 
 def test_module_entrypoint_shows_help():
@@ -16,7 +33,8 @@ def test_module_entrypoint_shows_help():
 
 def test_console_script_shows_help():
     result = subprocess.run(
-        ["paperctl", "--help"],
+        [*_console_script_command(), "--help"],
+        cwd=PROJECT_ROOT,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -26,25 +44,19 @@ def test_console_script_shows_help():
     assert "paperctl" in result.stdout
 
 
-def test_placeholder_command_returns_invalid_invocation_for_unimplemented_commands():
-    for command in ["audit", "build"]:
-        result = subprocess.run(
-            [sys.executable, "-m", "paperctl", command],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        assert result.returncode == 4
-        assert f"command not implemented yet: {command}" in result.stderr
-
-
-def test_render_command_is_not_placeholder():
+@pytest.mark.parametrize(
+    "command",
+    ["discover", "inventory", "normalize", "render", "audit", "build"],
+)
+def test_implemented_commands_report_missing_config_instead_of_placeholder(tmp_path, command):
     result = subprocess.run(
-        [sys.executable, "-m", "paperctl", "render"],
+        [sys.executable, "-m", "paperctl", "--repo", str(tmp_path), command],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
     )
-    assert "command not implemented yet: render" not in result.stderr
+
+    assert result.returncode == 2
+    assert "missing config file: paper.yaml" in result.stderr
+    assert f"command not implemented yet: {command}" not in result.stderr
