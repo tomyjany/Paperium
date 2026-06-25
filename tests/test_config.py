@@ -244,6 +244,26 @@ def test_init_rejects_unsafe_runtime_directory_without_partial_config(tmp_path):
     assert not (repo / "paper.yaml").exists()
 
 
+def test_init_force_rejects_directory_obstructing_paper_yaml(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "paper.yaml").mkdir()
+
+    result = subprocess.run(
+        [sys.executable, "-m", "paperctl", "--repo", str(repo), "init", "--force"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "paper.yaml" in result.stderr
+    assert "not a file" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert (repo / "paper.yaml").is_dir()
+
+
 def test_init_force_replaces_only_paper_yaml(tmp_path):
     from paperctl.config import init_repo
 

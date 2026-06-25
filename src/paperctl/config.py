@@ -123,6 +123,8 @@ def validate_config(config: dict[str, Any], repo: Path) -> dict[str, Any]:
 def init_repo(repo: Path, force: bool) -> InitResult:
     repo = repo.resolve()
     config_path = repo / CONFIG_NAME
+    if config_path.exists() and not config_path.is_file():
+        raise ConfigError(f"{CONFIG_NAME} exists but is not a file")
     if config_path.exists() and not force:
         raise ConfigError(f"{CONFIG_NAME} already exists; use --force to replace it")
 
