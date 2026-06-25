@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
+from yaml.constructor import ConstructorError
 from jsonschema import ValidationError
 
 from paperctl._support.atomic import write_text_atomic
@@ -16,6 +17,42 @@ from paperctl._support.schema import validate_artifact
 
 CONFIG_NAME = "paper.yaml"
 WORK_SUBDIRECTORIES = ("inventories", "evidence", "cache")
+
+
+class _StrictSafeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_unique_mapping(
+    loader: _StrictSafeLoader, node: yaml.nodes.MappingNode, deep: bool = False
+) -> dict[Any, Any]:
+    seen: set[Any] = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in seen
+        except TypeError as exc:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found unhashable key: {key!r}",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"duplicate key: {key!r}",
+                key_node.start_mark,
+            )
+        seen.add(key)
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+
+_StrictSafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
 
 
 class ConfigError(ValueError):
@@ -102,7 +139,7 @@ def load_config(repo: Path) -> dict[str, Any]:
         raise ConfigError(f"could not read config file: {CONFIG_NAME}: {exc}") from exc
 
     try:
-        loaded = yaml.safe_load(text)
+        loaded = yaml.load(text, Loader=_StrictSafeLoader)
     except yaml.YAMLError as exc:
         raise ConfigError(f"invalid YAML in {CONFIG_NAME}: {exc}") from exc
     if not isinstance(loaded, dict):

@@ -343,6 +343,31 @@ def test_secret_like_canonical_values_are_redacted(tmp_path):
     assert packet["counts"]["redaction_count"] >= 1
 
 
+def test_secret_like_canonical_fact_id_redacts_neutral_selector(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp046-secret-fact-id-neutral-selector")
+    _write_json(experiment / "outputs" / "secrets.json", {"value": "sk-live-secret"})
+    _add_canonical_mapping(
+        repo,
+        "exp046-secret-fact-id-neutral-selector",
+        fact_id="api_key",
+        source="outputs/secrets.json",
+        selector="/value",
+        expected_type="string",
+        unit=None,
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp046-secret-fact-id-neutral-selector")
+    serialized = json.dumps(packet, sort_keys=True)
+    assert "sk-live-secret" not in serialized
+    assert packet["canonical_facts"][0]["value"] == "[REDACTED]"
+    assert packet["counts"]["redaction_count"] >= 1
+
+
 def test_secret_like_non_string_values_are_redacted_everywhere(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     experiment = _add_experiment(repo, "exp012-secret-non-string")

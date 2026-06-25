@@ -16,7 +16,7 @@ from paperctl._support.fingerprints import (
 from paperctl._support.hashing import canonical_json_hash
 from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
 from paperctl._support.paths import is_repo_relative_posix
-from paperctl._support.redaction import redact_value_for_key
+from paperctl._support.redaction import key_is_secret_like, redact_value_for_key
 from paperctl._support.schema import validate_artifact
 from paperctl._support.sorting import posix_path_sort_key
 from paperctl.adapters import ADAPTER_VERSIONS
@@ -725,7 +725,10 @@ def _canonical_value_type(value: Any, expected_type: str) -> str:
 
 
 def _redact_canonical_fact(fact: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    value, count = redact_value_for_key(_selector_leaf(fact["source"]["selector"]), fact["value"])
+    selector_key = _selector_leaf(fact["source"]["selector"])
+    fact_id = fact["fact_id"]
+    redaction_key = fact_id if key_is_secret_like(fact_id) else selector_key
+    value, count = redact_value_for_key(redaction_key, fact["value"])
     if count == 0:
         return fact, 0
     redacted = dict(fact)

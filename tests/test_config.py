@@ -32,6 +32,52 @@ def test_safe_yaml_parsing_rejects_custom_tags(tmp_path):
         load_config(repo)
 
 
+def test_load_config_rejects_duplicate_yaml_keys(tmp_path):
+    from paperctl.config import ConfigError, load_config
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "paper.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: 1",
+                "paper:",
+                "  work_directory: paper/work",
+                "  draft_output: PAPER.draft.md",
+                "  final_output: PAPER.md",
+                "  audit_report: paper/PAPER.audit.json",
+                "paper:",
+                "  work_directory: alternate/work",
+                "  draft_output: PAPER.draft.md",
+                "  final_output: PAPER.md",
+                "  audit_report: paper/PAPER.audit.json",
+                "questions:",
+                "  root: questions",
+                "  pattern: q*",
+                "  experiments_directory: experiments",
+                "evidence:",
+                "  default_canonical_artifacts:",
+                "    - outputs/experiment_report.json",
+                "  canonical_facts: {}",
+                "  extraction_limits:",
+                "    maximum_file_bytes: 10000000",
+                "    maximum_scalar_observations_per_file: 200",
+                "    maximum_nesting_depth: 12",
+                "    preview_rows: 20",
+                "    log_head_lines: 100",
+                "    log_tail_lines: 100",
+                "audit:",
+                "  default_stage: publication",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="duplicate key"):
+        load_config(repo)
+
+
 def test_load_config_rejects_directory_paper_yaml_as_config_error(tmp_path):
     from paperctl.config import ConfigError, load_config
 
