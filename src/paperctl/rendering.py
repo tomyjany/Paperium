@@ -49,6 +49,8 @@ def render(repo: Path, config: dict[str, Any], force: bool = False) -> RenderRes
     repo = repo.resolve()
     draft_path = config["paper"]["draft_output"]
     final_path = config["paper"]["final_output"]
+    if _is_repo_root_paper_path(draft_path):
+        raise RenderError("Milestone 1 render never writes repository-root PAPER.md")
     if draft_path == final_path:
         raise RenderError("paper.draft_output must not equal protected paper.final_output")
 
@@ -223,12 +225,13 @@ def _append_experiment(
         ]
     )
     _append_canonical_facts(lines, packet)
-    _append_observed_values(lines, packet)
-    _append_records(lines, "Previews", packet, "previews", PREVIEW_LIMIT)
-    _append_records(lines, "Diagnostics", packet, "diagnostics", DIAGNOSTIC_LIMIT)
+    evidence_path = entry["evidence_path"]
+    _append_observed_values(lines, packet, evidence_path)
+    _append_records(lines, "Previews", packet, "previews", PREVIEW_LIMIT, evidence_path)
+    _append_records(lines, "Diagnostics", packet, "diagnostics", DIAGNOSTIC_LIMIT, evidence_path)
     _append_conflicts(lines, packet)
-    _append_records(lines, "Warnings", packet, "warnings", WARNING_LIMIT)
-    _append_unsupported(lines, packet)
+    _append_records(lines, "Warnings", packet, "warnings", WARNING_LIMIT, evidence_path)
+    _append_unsupported(lines, packet, evidence_path)
 
 
 def _append_canonical_facts(lines: list[str], packet: dict[str, Any]) -> None:
@@ -254,7 +257,7 @@ def _append_canonical_facts(lines: list[str], packet: dict[str, Any]) -> None:
     lines.append("")
 
 
-def _append_observed_values(lines: list[str], packet: dict[str, Any]) -> None:
+def _append_observed_values(lines: list[str], packet: dict[str, Any], evidence_path: str) -> None:
     lines.extend(["#### Observed Values", ""])
     values = packet["observed_values"]
     if not values:
@@ -271,9 +274,7 @@ def _append_observed_values(lines: list[str], packet: dict[str, Any]) -> None:
             f"{_cell(source['path'])} | "
             f"{_cell(_source_selector(source))} |"
         )
-    _append_omitted(
-        lines, len(values), OBSERVED_LIMIT, packet["experiment_path"], "observed values"
-    )
+    _append_omitted(lines, len(values), OBSERVED_LIMIT, evidence_path, "observed values")
     lines.append("")
 
 
@@ -283,6 +284,7 @@ def _append_records(
     packet: dict[str, Any],
     key: str,
     limit: int,
+    evidence_path: str,
 ) -> None:
     lines.extend([f"#### {title}", ""])
     records = packet[key]
@@ -299,7 +301,7 @@ def _append_records(
             f"{_cell(record['message'])} | "
             f"{_cell(_record_detail(record))} |"
         )
-    _append_omitted(lines, len(records), limit, packet["experiment_path"], key.replace("_", " "))
+    _append_omitted(lines, len(records), limit, evidence_path, key.replace("_", " "))
     lines.append("")
 
 
@@ -323,7 +325,7 @@ def _append_conflicts(lines: list[str], packet: dict[str, Any]) -> None:
     lines.append("")
 
 
-def _append_unsupported(lines: list[str], packet: dict[str, Any]) -> None:
+def _append_unsupported(lines: list[str], packet: dict[str, Any], evidence_path: str) -> None:
     lines.extend(["#### Unsupported Artifacts", ""])
     artifacts = packet["unsupported_artifacts"]
     if not artifacts:
@@ -336,7 +338,7 @@ def _append_unsupported(lines: list[str], packet: dict[str, Any]) -> None:
         lines,
         len(artifacts),
         UNSUPPORTED_LIMIT,
-        packet["experiment_path"],
+        evidence_path,
         "unsupported artifacts",
     )
     lines.append("")
@@ -346,12 +348,11 @@ def _append_omitted(
     lines: list[str],
     count: int,
     limit: int,
-    experiment_path: str,
+    evidence_path: str,
     label: str,
 ) -> None:
     if count <= limit:
         return
-    evidence_path = _evidence_path_from_experiment(experiment_path)
     omitted = count - limit
     lines.append(f"_{omitted} {label} omitted by render limit; see `{_code(evidence_path)}`._")
 
@@ -393,10 +394,6 @@ def _source_selector(source: dict[str, Any]) -> str:
     if selector_type == "line_range":
         return f"lines {source['line_start']}-{source['line_end']}"
     return "none"
-
-
-def _evidence_path_from_experiment(experiment_path: str) -> str:
-    return f"paper/work/evidence/{experiment_path}.json"
 
 
 def _cell(value: Any) -> str:
@@ -492,6 +489,10 @@ def _resolve_output_path(repo: Path, path: str, *, label: str) -> Path:
         if not current.exists():
             break
     return repo / Path(*parts)
+
+
+def _is_repo_root_paper_path(path: str) -> bool:
+    return PurePosixPath(path).parts == ("PAPER.md",)
 
 
 def _render_state_path(config: dict[str, Any]) -> str:

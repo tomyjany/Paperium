@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from conftest import copy_fixture_repo, read_json, run_paperctl
 from paperctl._support.hashing import sha256_file
 from paperctl._support.schema import validate_artifact
@@ -23,13 +25,22 @@ def _run_prerequisites(repo: Path) -> dict[str, Any]:
     assert inventoried.returncode == 0, inventoried.stderr
     normalized = run_paperctl(repo, "normalize")
     assert normalized.returncode == 0, normalized.stderr
-    return read_json(repo / MANIFEST_PATH)
+    config = _load_config(repo)
+    return read_json(repo / config["paper"]["work_directory"] / "manifest.json")
 
 
 def _entry(manifest: dict[str, Any], experiment_ref: str) -> dict[str, Any]:
     return next(
         entry for entry in manifest["experiments"] if entry["experiment_ref"] == experiment_ref
     )
+
+
+def _write_config(repo: Path, config: dict[str, Any]) -> None:
+    (repo / "paper.yaml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
+def _load_config(repo: Path) -> dict[str, Any]:
+    return yaml.safe_load((repo / "paper.yaml").read_text(encoding="utf-8"))
 
 
 def test_render_requires_fresh_manifest_inventory_and_evidence_without_running_prerequisites(
@@ -91,6 +102,25 @@ def test_render_rejects_stale_evidence_packet_without_rebuilding_it(tmp_path):
     assert "run paperctl normalize --force first" in result.stderr
     assert read_json(evidence_path)["execution_status"] == "failed"
     assert not (repo / DRAFT_PATH).exists()
+
+
+def test_render_rejects_repository_root_paper_md_as_draft_output_without_touching_sentinel(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["paper"]["draft_output"] = "PAPER.md"
+    config["paper"]["final_output"] = "paper/future-final.md"
+    _write_config(repo, config)
+    sentinel = (repo / "PAPER.md").read_bytes()
+    _run_prerequisites(repo)
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "Milestone 1 render never writes repository-root PAPER.md" in result.stderr
+    assert (repo / "PAPER.md").read_bytes() == sentinel
+    assert not (repo / "paper" / "work" / "render-state.json").exists()
 
 
 def test_render_writes_bounded_preanalysis_draft_and_state_without_touching_final_paper(
@@ -199,6 +229,32 @@ def test_render_writes_bounded_preanalysis_draft_and_state_without_touching_fina
     assert state["fingerprint"]["evidence_packet_sha256"] == state["evidence_packet_sha256"]
     assert state["fingerprint"]["config_sha256"].startswith("sha256:")
     assert state["fingerprint"]["fingerprint_sha256"].startswith("sha256:")
+
+
+def test_render_omitted_counts_use_manifest_evidence_path_with_custom_work_directory(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["paper"]["work_directory"] = "custom-paper/work"
+    config["evidence"]["extraction_limits"]["maximum_scalar_observations_per_file"] = 30
+    _write_config(repo, config)
+    experiment = (
+        repo / "questions" / "q001-throughput" / "experiments" / "exp005-unsupported-and-previews"
+    )
+    (experiment / "outputs" / "many-values.json").write_text(
+        json.dumps({f"value_{index}": index for index in range(25)}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+    evidence_path = _entry(manifest, "exp005-unsupported-and-previews")["evidence_path"]
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 0, result.stderr
+    draft = (repo / DRAFT_PATH).read_text(encoding="utf-8")
+    assert f"see `{evidence_path}`" in draft
+    assert "see `paper/work/evidence/questions/q001-throughput" not in draft
 
 
 def test_render_is_byte_identical_and_force_only_bypasses_render_cache(tmp_path):

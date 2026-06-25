@@ -136,6 +136,33 @@ def _manifest():
     }
 
 
+def _render_state():
+    hashes = ["sha256:" + "c" * 64]
+    return {
+        "schema_version": 1,
+        "artifact_type": "render_state",
+        "draft_output": "PAPER.draft.md",
+        "fingerprint": {
+            "stage": {"name": "render", "version": 1},
+            "schema_version": 1,
+            "renderer_version": "1",
+            "config_sha256": "sha256:" + "a" * 64,
+            "manifest_path": "paper/work/manifest.json",
+            "manifest_sha256": "sha256:" + "b" * 64,
+            "evidence_packet_sha256": hashes,
+            "draft_path": "PAPER.draft.md",
+            "draft_sha256": "sha256:" + "d" * 64,
+            "input_counts": {
+                "experiment_count": 1,
+                "evidence_packet_count": 1,
+            },
+            "fingerprint_sha256": "sha256:" + "e" * 64,
+        },
+        "manifest_sha256": "sha256:" + "b" * 64,
+        "evidence_packet_sha256": hashes,
+    }
+
+
 def test_packaged_schemas_load_through_importlib_resources():
     from importlib import resources
 
@@ -229,6 +256,36 @@ def test_evidence_packet_schema_requires_generated_metadata():
     del missing_fingerprint["fingerprint"]
     with pytest.raises(ValidationError):
         validate_artifact("evidence-packet.schema.json", missing_fingerprint)
+
+
+def test_render_state_schema_requires_generated_metadata_and_fingerprint_contract():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("render-state.schema.json", _render_state())
+
+    for key in ["fingerprint", "manifest_sha256", "evidence_packet_sha256"]:
+        state = _render_state()
+        del state[key]
+        with pytest.raises(ValidationError):
+            validate_artifact("render-state.schema.json", state)
+
+    for key in [
+        "stage",
+        "schema_version",
+        "renderer_version",
+        "config_sha256",
+        "manifest_path",
+        "manifest_sha256",
+        "evidence_packet_sha256",
+        "draft_path",
+        "draft_sha256",
+        "input_counts",
+        "fingerprint_sha256",
+    ]:
+        state = _render_state()
+        del state["fingerprint"][key]
+        with pytest.raises(ValidationError):
+            validate_artifact("render-state.schema.json", state)
 
 
 def test_evidence_packet_relative_paths_must_be_posix_repo_relative():
