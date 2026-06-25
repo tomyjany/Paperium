@@ -500,7 +500,7 @@ def _write_report(config: dict[str, Any], report: dict[str, Any], output_path: P
 def _resolve_audit_report_output(repo: Path, config: dict[str, Any]) -> Path:
     report_path = config["paper"]["audit_report"]
     report_relative = _normalized_repo_relative_path(report_path, label="paper.audit_report")
-    if report_relative == "PAPER.md":
+    if _is_same_or_child_posix_path(report_relative, "PAPER.md"):
         raise AuditError("paper.audit_report must not target repository-root PAPER.md")
 
     protected_paths = [
@@ -541,16 +541,24 @@ def _reject_protected_path_collisions(
 ) -> None:
     resolved_output_path = output_path.resolve(strict=False)
     for protected_path, message in protected_paths:
-        if report_relative == _normalized_repo_relative_path(
+        protected_relative = _normalized_repo_relative_path(
             protected_path,
             label="protected output",
-        ):
+        )
+        if _is_same_or_child_posix_path(report_relative, protected_relative):
             raise AuditError(message)
     for protected_path, message in protected_paths:
         protected_output = _resolve_repo_relative_target(repo, protected_path)
+        if _is_same_or_child_filesystem_path(output_path, protected_output):
+            raise AuditError(message)
+        resolved_protected_output = protected_output.resolve(strict=False)
         if (
             protected_output == output_path
-            or protected_output.resolve(strict=False) == resolved_output_path
+            or resolved_protected_output == resolved_output_path
+            or _is_same_or_child_filesystem_path(
+                resolved_output_path,
+                resolved_protected_output,
+            )
         ):
             raise AuditError(message)
 
@@ -630,6 +638,16 @@ def _reject_work_directory_artifact_collisions(config: dict[str, Any]) -> None:
 
 def _is_same_or_child_posix_path(path: str, directory: str) -> bool:
     return path == directory or path.startswith(f"{directory}/")
+
+
+def _is_same_or_child_filesystem_path(path: Path, parent: Path) -> bool:
+    if path == parent:
+        return True
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def _normalized_repo_relative_path(path: str, *, label: str) -> str:

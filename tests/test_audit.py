@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
@@ -608,6 +609,53 @@ def test_audit_rejects_report_collision_with_discovery_manifest_without_touching
     assert manifest_path.read_bytes() == manifest_before
 
 
+@pytest.mark.parametrize(
+    ("audit_report", "protected_path", "expected_error"),
+    [
+        (
+            "PAPER.md/audit.json",
+            FINAL_PATH,
+            "paper.audit_report must not target repository-root PAPER.md",
+        ),
+        (
+            "PAPER.draft.md/audit.json",
+            DRAFT_PATH,
+            "paper.audit_report must not target protected paper.draft_output",
+        ),
+        (
+            "paper/work/render-state.json/audit.json",
+            RENDER_STATE_PATH,
+            "paper.audit_report must not target render state output",
+        ),
+        (
+            "paper/work/manifest.json/audit.json",
+            MANIFEST_PATH,
+            "paper.audit_report must not target discovery manifest",
+        ),
+    ],
+)
+def test_audit_rejects_report_descendant_under_protected_file_outputs(
+    tmp_path,
+    audit_report,
+    protected_path,
+    expected_error,
+):
+    repo = copy_fixture_repo(tmp_path)
+    target = repo / protected_path
+    if target.exists():
+        target.unlink()
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = audit_report
+    _write_config_yaml(repo, config)
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert expected_error in result.stderr
+    assert not target.exists()
+    assert not target.is_dir()
+
+
 def test_audit_rejects_report_collision_with_manifest_inventory_without_touching_inventory(
     tmp_path,
 ):
@@ -644,6 +692,35 @@ def test_audit_rejects_report_collision_with_manifest_evidence_without_touching_
     assert result.returncode == 2
     assert "paper.audit_report must not target manifest-recorded evidence_path" in result.stderr
     assert absolute_evidence_path.read_bytes() == evidence_before
+
+
+@pytest.mark.parametrize(
+    ("manifest_key", "expected_error"),
+    [
+        ("inventory_path", "paper.audit_report must not target manifest-recorded inventory_path"),
+        ("evidence_path", "paper.audit_report must not target manifest-recorded evidence_path"),
+    ],
+)
+def test_audit_rejects_report_descendant_under_manifest_recorded_artifact_paths(
+    tmp_path,
+    manifest_key,
+    expected_error,
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    protected_path = Path(manifest["experiments"][0][manifest_key])
+    target = repo / protected_path
+    target.unlink()
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = (protected_path / "audit.json").as_posix()
+    _write_config_yaml(repo, config)
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert expected_error in result.stderr
+    assert not target.exists()
+    assert not target.is_dir()
 
 
 def test_audit_rejects_report_under_generated_inventory_directory_when_manifest_missing(
