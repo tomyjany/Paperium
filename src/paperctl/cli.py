@@ -1,5 +1,8 @@
 import argparse
+from pathlib import Path
 import sys
+
+from paperctl.config import ConfigError, RepoResolutionError, init_repo, resolve_repo
 
 
 SUCCESS = 0
@@ -27,6 +30,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
+        return SUCCESS
+    try:
+        repo = resolve_repo(args.repo, Path.cwd())
+    except RepoResolutionError as exc:
+        print(f"{parser.prog}: {exc}", file=sys.stderr)
+        return INVALID_INVOCATION
+    if args.command == "init":
+        try:
+            result = init_repo(repo, args.force)
+        except ConfigError as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return INVALID_INVOCATION
+        for path in result.created:
+            print(f"created {path}")
+        for path in result.replaced:
+            print(f"replaced {path}")
         return SUCCESS
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
