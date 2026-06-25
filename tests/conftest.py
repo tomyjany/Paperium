@@ -42,6 +42,6 @@ def run_paperctl(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def read_json(path: Path) -> dict[str, Any]:
+def read_json(path: Path) -> Any:
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)

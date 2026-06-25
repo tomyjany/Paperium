@@ -382,3 +382,39 @@ def test_fixture_unsupported_binary_contains_non_text_bytes(tmp_path):
     assert b"\x00" in payload
     with pytest.raises(UnicodeDecodeError):
         payload.decode("utf-8")
+
+
+def test_fixture_extraction_limits_parse_completed_report_but_keep_preview_cases(tmp_path):
+    from paperctl.config import load_config
+
+    repo = copy_fixture_repo(tmp_path)
+    config = load_config(repo)
+    limits = config["evidence"]["extraction_limits"]
+    preview_experiment = (
+        repo
+        / "questions"
+        / "q001-throughput"
+        / "experiments"
+        / "exp005-unsupported-and-previews"
+        / "outputs"
+    )
+    completed_report = (
+        repo
+        / "questions"
+        / "q001-throughput"
+        / "experiments"
+        / "exp001-completed"
+        / "outputs"
+        / "experiment_report.json"
+    )
+
+    assert limits["maximum_file_bytes"] >= completed_report.stat().st_size
+    assert len((preview_experiment / "events.jsonl").read_text(encoding="utf-8").splitlines()) > (
+        limits["preview_rows"]
+    )
+    assert len((preview_experiment / "run.log").read_text(encoding="utf-8").splitlines()) > (
+        limits["log_head_lines"]
+    )
+    assert len((preview_experiment / "run.log").read_text(encoding="utf-8").splitlines()) > (
+        limits["log_tail_lines"]
+    )

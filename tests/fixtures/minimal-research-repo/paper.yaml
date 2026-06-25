@@ -40,7 +40,7 @@ evidence:
         expected_type: number
         unit: pages/s
   extraction_limits:
-    maximum_file_bytes: 80
+    maximum_file_bytes: 4096
     maximum_scalar_observations_per_file: 4
     maximum_nesting_depth: 4
     preview_rows: 2
