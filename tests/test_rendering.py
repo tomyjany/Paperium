@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,21 @@ def test_render_rejects_repository_root_paper_md_as_draft_output_without_touchin
     assert not (repo / "paper" / "work" / "render-state.json").exists()
 
 
+def test_render_rejects_equivalent_draft_and_final_output_paths(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["paper"]["draft_output"] = "./paper/final.md"
+    config["paper"]["final_output"] = "paper/final.md"
+    _write_config(repo, config)
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "paper.draft_output must not target protected paper.final_output" in result.stderr
+    assert not (repo / "paper" / "final.md").exists()
+    assert not (repo / "paper" / "work" / "render-state.json").exists()
+
+
 def test_render_writes_bounded_preanalysis_draft_and_state_without_touching_final_paper(
     tmp_path,
 ):
@@ -229,6 +245,48 @@ def test_render_writes_bounded_preanalysis_draft_and_state_without_touching_fina
     assert state["fingerprint"]["evidence_packet_sha256"] == state["evidence_packet_sha256"]
     assert state["fingerprint"]["config_sha256"].startswith("sha256:")
     assert state["fingerprint"]["fingerprint_sha256"].startswith("sha256:")
+
+
+def test_render_escapes_untrusted_markdown_syntax_in_tables(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["evidence"]["extraction_limits"]["maximum_scalar_observations_per_file"] = 20
+    _write_config(repo, config)
+    experiment = (
+        repo / "questions" / "q001-throughput" / "experiments" / "exp005-unsupported-and-previews"
+    )
+    untrusted = "[click](javascript:alert(1)) ![x](bad) *emphasis* _italic_ # heading"
+    (experiment / "outputs" / "unsafe-observed.json").write_text(
+        json.dumps({"observed": untrusted}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "unsafe-preview.jsonl").write_text(
+        json.dumps({"preview": untrusted, untrusted: 1}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "unsafe-preview.log").write_text(
+        f"{untrusted}\n",
+        encoding="utf-8",
+    )
+    _run_prerequisites(repo)
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 0, result.stderr
+    draft = (repo / DRAFT_PATH).read_text(encoding="utf-8")
+    for raw_fragment in [
+        "[click](javascript:alert(1))",
+        "![x](bad)",
+        "*emphasis*",
+        "_italic_",
+    ]:
+        assert raw_fragment not in draft
+    assert re.search(r"(?<!\\)# heading", draft) is None
+    assert r"\[click\]\(javascript:alert\(1\)\)" in draft
+    assert r"\!\[x\]\(bad\)" in draft
+    assert r"\*emphasis\*" in draft
+    assert r"\_italic\_" in draft
+    assert r"\# heading" in draft
 
 
 def test_render_omitted_counts_use_manifest_evidence_path_with_custom_work_directory(

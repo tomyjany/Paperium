@@ -12,7 +12,7 @@ from paperctl._support.blockers import derive_publication_blockers
 from paperctl._support.hashing import canonical_json_hash, sha256_bytes, sha256_file
 from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
 from paperctl._support.paths import is_repo_relative_posix
-from paperctl._support.redaction import redact_text
+from paperctl._support.redaction import REDACTED, redact_text
 from paperctl._support.schema import validate_artifact
 from paperctl._support.sorting import posix_path_sort_key
 from paperctl.inventory import InventoryError, _manifest_path, load_manifest
@@ -51,8 +51,10 @@ def render(repo: Path, config: dict[str, Any], force: bool = False) -> RenderRes
     final_path = config["paper"]["final_output"]
     if _is_repo_root_paper_path(draft_path):
         raise RenderError("Milestone 1 render never writes repository-root PAPER.md")
-    if draft_path == final_path:
-        raise RenderError("paper.draft_output must not equal protected paper.final_output")
+    draft_output = _resolve_output_path(repo, draft_path, label="draft")
+    final_output = _resolve_output_path(repo, final_path, label="final")
+    if draft_output == final_output:
+        raise RenderError("paper.draft_output must not target protected paper.final_output")
 
     try:
         manifest = load_manifest(repo, config)
@@ -70,7 +72,6 @@ def render(repo: Path, config: dict[str, Any], force: bool = False) -> RenderRes
     except ValidationError as exc:
         raise RenderError(f"invalid generated render state: {exc.message}") from exc
 
-    draft_output = _resolve_output_path(repo, draft_path, label="draft")
     state_relative = _render_state_path(config)
     state_output = _resolve_output_path(repo, state_relative, label="render state")
     status = _write_outputs(
@@ -407,7 +408,28 @@ def _code(value: str) -> str:
 
 def _table_text(value: str) -> str:
     redacted, _ = redact_text(value)
-    return redacted.replace("`", "\\`").replace("|", "\\|").replace("<", "\\<").replace(">", "\\>")
+    return _escape_table_markdown(redacted)
+
+
+def _escape_table_markdown(value: str) -> str:
+    redacted_sentinel = "\0REDACTED\0"
+    value = value.replace(REDACTED, redacted_sentinel)
+    escaped: list[str] = []
+    for index, character in enumerate(value):
+        previous_character = value[index - 1] if index > 0 else ""
+        next_character = value[index + 1] if index + 1 < len(value) else ""
+        if character in "\\`*[]()!|<>":
+            escaped.append(f"\\{character}")
+        elif character == "_":
+            if previous_character.isalnum() and next_character.isalnum():
+                escaped.append(character)
+            else:
+                escaped.append(r"\_")
+        elif character == "#" and (not previous_character or previous_character.isspace()):
+            escaped.append(r"\#")
+        else:
+            escaped.append(character)
+    return "".join(escaped).replace(redacted_sentinel, REDACTED)
 
 
 def _build_render_state(
@@ -504,7 +526,6 @@ def _relevant_config(config: dict[str, Any]) -> dict[str, Any]:
         "paper": {
             "work_directory": config["paper"]["work_directory"],
             "draft_output": config["paper"]["draft_output"],
-            "final_output": config["paper"]["final_output"],
         },
         "render_limits": {
             "observed_values": OBSERVED_LIMIT,
