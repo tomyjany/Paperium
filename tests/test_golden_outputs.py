@@ -48,6 +48,10 @@ GOLDEN_OUTPUTS = {
 FORBIDDEN_PATTERNS = [
     re.compile(rb"/tmp/"),
     re.compile(rb"/home/"),
+    re.compile(rb"/Users/"),
+    re.compile(rb"/var/"),
+    re.compile(rb"/private/"),
+    re.compile(rb"/etc/"),
     re.compile(rb"[A-Za-z]:\\"),
     re.compile(rb"\btmp_path\b"),
     re.compile(rb"\bpytest-[^/\s]+"),
@@ -101,6 +105,9 @@ def _assert_no_platform_separators_in_paths(path: Path, value: object) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if _is_path_field(key) and isinstance(item, str):
+                assert not item.startswith("/"), (
+                    f"{path.as_posix()} contains absolute path {item!r}"
+                )
                 assert "\\" not in item, f"{path.as_posix()} contains backslash path {item!r}"
             _assert_no_platform_separators_in_paths(path, item)
     elif isinstance(value, list):
