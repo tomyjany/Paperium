@@ -1,4 +1,7 @@
 {
   "execution_status": "incomplete",
-  "reason": "input corpus was not available"
+  "reason": "input corpus was not available",
+  "observations": {
+    "throughput_pages_per_second": 21.5
+  }
 }

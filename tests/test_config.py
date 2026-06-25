@@ -348,3 +348,37 @@ def test_fixture_helpers_read_json_init_git_and_run_paperctl(tmp_path):
     assert "replaced paper.yaml" in result.stdout
     assert report["execution_status"] == "completed"
     assert (repo / "PAPER.md").read_bytes().startswith(FIXTURE_PAPER_PREFIX)
+
+
+def test_fixture_incomplete_experiment_has_stale_readme_and_structured_observation(tmp_path):
+    from paperctl.config import load_config
+
+    repo = copy_fixture_repo(tmp_path)
+    experiment_path = "questions/q001-throughput/experiments/exp002-incomplete"
+
+    readme = (repo / experiment_path / "README.md").read_text(encoding="utf-8")
+    status = read_json(repo / experiment_path / "outputs" / "status.json")
+    config = load_config(repo)
+
+    assert "throughput reached 999 pages/s" in readme
+    assert status["observations"]["throughput_pages_per_second"] == 21.5
+    assert experiment_path not in config["evidence"]["canonical_facts"]
+
+
+def test_fixture_unsupported_binary_contains_non_text_bytes(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+
+    payload = (
+        repo
+        / "questions"
+        / "q001-throughput"
+        / "experiments"
+        / "exp005-unsupported-and-previews"
+        / "outputs"
+        / "model.bin"
+    ).read_bytes()
+
+    assert len(payload) <= 8
+    assert b"\x00" in payload
+    with pytest.raises(UnicodeDecodeError):
+        payload.decode("utf-8")
