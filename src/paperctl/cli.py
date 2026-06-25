@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 
 SUCCESS = 0
@@ -27,5 +28,5 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return SUCCESS
-    parser.error(f"command not implemented yet: {args.command}")
+    print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION

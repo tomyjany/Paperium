@@ -24,3 +24,15 @@ def test_console_script_shows_help():
     )
     assert result.returncode == 0
     assert "paperctl" in result.stdout
+
+
+def test_placeholder_command_returns_invalid_invocation():
+    result = subprocess.run(
+        [sys.executable, "-m", "paperctl", "discover"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 4
+    assert "command not implemented yet: discover" in result.stderr
