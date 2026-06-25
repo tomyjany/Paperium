@@ -1,0 +1,4 @@
+{
+  "mode": "smoke",
+  "throughput_pages_per_second": 3.0
+}

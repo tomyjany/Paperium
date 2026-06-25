@@ -6,6 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from conftest import copy_fixture_repo, init_git_repo, read_json, run_paperctl
+
+
+FIXTURE_PAPER_PREFIX = b"# SENTINEL PAPER.md\n"
+
 
 def _git_init(path: Path) -> None:
     subprocess.run(
@@ -308,3 +313,38 @@ def test_init_force_replaces_only_paper_yaml(tmp_path):
     assert result.replaced == ["paper.yaml"]
     assert cache_artifact.read_text(encoding="utf-8") == '{"kept": true}\n'
     assert "schema_version: 1" in (repo / "paper.yaml").read_text(encoding="utf-8")
+
+
+def test_copy_fixture_repo_mutates_tmp_copy_not_committed_fixture(tmp_path):
+    committed_fixture = Path(__file__).parent / "fixtures" / "minimal-research-repo"
+
+    repo = copy_fixture_repo(tmp_path)
+
+    assert repo != committed_fixture
+    assert (repo / "PAPER.md").read_bytes().startswith(FIXTURE_PAPER_PREFIX)
+
+    (repo / "PAPER.md").write_text("# changed copy only\n", encoding="utf-8")
+
+    assert (repo / "PAPER.md").read_text(encoding="utf-8") == "# changed copy only\n"
+    assert (committed_fixture / "PAPER.md").read_bytes().startswith(FIXTURE_PAPER_PREFIX)
+
+
+def test_fixture_helpers_read_json_init_git_and_run_paperctl(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    init_git_repo(repo)
+
+    result = run_paperctl(repo, "init", "--force")
+    report = read_json(
+        repo
+        / "questions"
+        / "q001-throughput"
+        / "experiments"
+        / "exp001-completed"
+        / "outputs"
+        / "experiment_report.json"
+    )
+
+    assert result.returncode == 0
+    assert "replaced paper.yaml" in result.stdout
+    assert report["execution_status"] == "completed"
+    assert (repo / "PAPER.md").read_bytes().startswith(FIXTURE_PAPER_PREFIX)

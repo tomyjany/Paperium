@@ -1,0 +1,50 @@
+schema_version: 1
+questions:
+  root: questions
+  pattern: q*
+  experiments_directory: experiments
+paper:
+  work_directory: paper/work
+  draft_output: PAPER.draft.md
+  final_output: PAPER.md
+  audit_report: paper/PAPER.audit.json
+evidence:
+  default_canonical_artifacts:
+    - outputs/experiment_report.json
+  canonical_facts:
+    questions/q001-throughput/experiments/exp001-completed:
+      - fact_id: throughput_pages_per_second
+        source: outputs/experiment_report.json
+        selector_type: json_pointer
+        selector: /canonical_facts/0/value
+        expected_type: number
+        unit: pages/s
+    questions/q001-throughput/experiments/exp003-structured-conflict:
+      - fact_id: throughput_pages_per_second
+        source: outputs/run-a.json
+        selector_type: json_pointer
+        selector: /metrics/throughput_pages_per_second
+        expected_type: number
+        unit: pages/s
+      - fact_id: throughput_pages_per_second
+        source: outputs/run-b.json
+        selector_type: json_pointer
+        selector: /metrics/throughput_pages_per_second
+        expected_type: number
+        unit: pages/s
+    questions/q001-throughput/experiments/exp004-smoke-and-full:
+      - fact_id: throughput_pages_per_second
+        source: outputs/full.json
+        selector_type: json_pointer
+        selector: /throughput_pages_per_second
+        expected_type: number
+        unit: pages/s
+  extraction_limits:
+    maximum_file_bytes: 80
+    maximum_scalar_observations_per_file: 4
+    maximum_nesting_depth: 4
+    preview_rows: 2
+    log_head_lines: 2
+    log_tail_lines: 1
+audit:
+  default_stage: publication
