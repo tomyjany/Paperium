@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
+from paperctl import normalize as normalize_module
 from paperctl._support.schema import validate_artifact
 
 
@@ -342,6 +343,64 @@ def test_secret_like_canonical_values_are_redacted(tmp_path):
     assert packet["counts"]["redaction_count"] >= 1
 
 
+def test_secret_like_non_string_values_are_redacted_everywhere(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp012-secret-non-string")
+    _write_json(
+        experiment / "outputs" / "metrics.json",
+        {
+            "password": 12345,
+            "token": False,
+            "secret": None,
+            "private_key": {"id": 67890},
+            "safe": 1,
+        },
+    )
+    (experiment / "outputs" / "config.yaml").write_text(
+        "passwd: 24680\naccess_key: false\nplain: 2\n",
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "events.jsonl").write_text(
+        '{"api_key": 13579, "nested": {"token": 97531}, "plain": true}\n',
+        encoding="utf-8",
+    )
+    _add_canonical_mapping(
+        repo,
+        "exp012-secret-non-string",
+        fact_id="password",
+        selector="/password",
+        expected_type="integer",
+        unit=None,
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp012-secret-non-string")
+    assert packet["canonical_facts"][0]["value"] == "[REDACTED]"
+    observed_by_selector = {
+        value["source"]["selector"]: value["value"] for value in packet["observed_values"]
+    }
+    assert observed_by_selector["/token"] == "[REDACTED]"
+    assert observed_by_selector["/secret"] == "[REDACTED]"
+    assert observed_by_selector["/private_key/id"] == "[REDACTED]"
+    assert observed_by_selector["/passwd"] == "[REDACTED]"
+    assert observed_by_selector["/access_key"] == "[REDACTED]"
+    assert observed_by_selector["/safe"] == 1
+    jsonl_preview = next(
+        preview
+        for preview in packet["previews"]
+        if preview["source"]["path"].endswith("/outputs/events.jsonl")
+    )
+    assert "13579" not in jsonl_preview["message"]
+    assert "97531" not in jsonl_preview["message"]
+    assert jsonl_preview["message"] == (
+        '{"api_key": "[REDACTED]", "nested": {"token": "[REDACTED]"}, "plain": true}'
+    )
+    assert packet["counts"]["redaction_count"] >= 7
+
+
 def test_report_contract_errors_block_experiment_evidence(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     mismatch = _add_experiment(repo, "exp011-report-mismatch")
@@ -611,6 +670,9 @@ def test_csv_and_jsonl_numeric_summaries_are_diagnostics_not_observed_values(tmp
     (experiment / "outputs" / "events.jsonl").write_text(
         '{"score": 1}\n{"score": "skip"}\n{"score": 2}\n', encoding="utf-8"
     )
+    config = _load_config(repo)
+    config["evidence"]["extraction_limits"]["preview_rows"] = 3
+    _write_config(repo, config)
     manifest = _run_prerequisites(repo)
 
     result = _normalize(repo)
@@ -635,6 +697,14 @@ def test_csv_and_jsonl_numeric_summaries_are_diagnostics_not_observed_values(tmp
     assert csv_summary["numeric_value_count"] == 2
     assert csv_summary["omitted_value_count"] == 1
     assert csv_summary["summary"] == {"count": 2, "max": 2.5, "min": 1.5}
+    csv_previews = [
+        preview
+        for preview in packet["previews"]
+        if preview["source"]["path"].endswith("/outputs/table.csv")
+    ]
+    assert [
+        (preview["source"]["line_start"], preview["source"]["line_end"]) for preview in csv_previews
+    ] == [(2, 2), (3, 3), (4, 4)]
     jsonl_summary = next(
         diagnostic
         for diagnostic in packet["diagnostics"]
@@ -719,6 +789,67 @@ def test_over_limit_csv_markdown_jsonl_and_log_extraction_is_bounded(tmp_path):
     )
     assert log_summary["byte_limit_truncated"] is True
     assert log_summary["omitted_byte_count"] > 0
+
+
+def test_evidence_fingerprint_uses_inventory_hashes_without_rehashing_sources(
+    tmp_path, monkeypatch
+):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp036-fingerprint-large-supported-files")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "table.csv").write_text(
+        "score\n" + "".join(f"{index}\n" for index in range(30)),
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "notes.md").write_text(
+        "# Heading\n" + ("body line\n" * 12),
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "events.jsonl").write_text(
+        "".join(f'{{"score": {index}}}\n' for index in range(20)),
+        encoding="utf-8",
+    )
+    (experiment / "outputs" / "run.log").write_text(
+        "".join(f"line {index}\n" for index in range(20)),
+        encoding="utf-8",
+    )
+    config = _load_config(repo)
+    config["evidence"]["extraction_limits"]["maximum_file_bytes"] = 40
+    _write_config(repo, config)
+    manifest = _run_prerequisites(repo)
+    entry = _entry(manifest, "exp036-fingerprint-large-supported-files")
+    inventory = read_json(repo / entry["inventory_path"])
+    source_paths = {
+        artifact["path"]
+        for artifact in inventory["artifacts"]
+        if artifact["file_type"] == "regular" and artifact["support_status"] == "supported"
+    }
+
+    import paperctl._support.fingerprints as fingerprints
+
+    original_sha256_file = fingerprints.sha256_file
+
+    def reject_source_rehash(path: Path) -> str:
+        relative = path.relative_to(repo).as_posix()
+        if relative in source_paths:
+            raise AssertionError(f"normalize rehashed source file: {relative}")
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(fingerprints, "sha256_file", reject_source_rehash)
+
+    packet = normalize_module._build_packet(
+        repo, config, entry, inventory, MANIFEST_PATH.as_posix()
+    )
+
+    fingerprint_source_hashes = {
+        source["path"]: source["sha256"] for source in packet["fingerprint"]["source_files"]
+    }
+    inventory_source_hashes = {
+        artifact["path"]: artifact["sha256"]
+        for artifact in inventory["artifacts"]
+        if artifact["file_type"] == "regular" and artifact["kind"] not in {"binary", "unknown"}
+    }
+    assert fingerprint_source_hashes == inventory_source_hashes
 
 
 def test_supported_text_decode_error_after_inventory_sniff_is_deterministic(tmp_path):

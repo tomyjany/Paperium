@@ -41,7 +41,13 @@ def extract(
                     redactions += count
                     redacted_row[key] = str(redacted_value)
                 previews.append(
-                    _record(source_path, source_hash, f"row {index}: {redacted_row}", index, index)
+                    _record(
+                        source_path,
+                        source_hash,
+                        f"row {index}: {redacted_row}",
+                        index + 1,
+                        index + 1,
+                    )
                 )
             for key, value in row.items():
                 try:

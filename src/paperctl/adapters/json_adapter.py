@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from paperctl._support.redaction import redact_value_for_key
+from paperctl._support.redaction import key_is_secret_like, redact_value_for_key
 
 
 ADAPTER_NAME = "json"
@@ -67,8 +67,15 @@ def scalar_observations(
     redactions = 0
     truncated = False
 
-    def visit(value: Any, pointer: str, depth: int, key: str | None) -> None:
+    def visit(
+        value: Any,
+        pointer: str,
+        depth: int,
+        key: str | None,
+        secret_like_ancestor: bool,
+    ) -> None:
         nonlocal redactions, truncated
+        current_secret_like = secret_like_ancestor or (key is not None and key_is_secret_like(key))
         if truncated:
             return
         if depth > max_depth:
@@ -90,7 +97,10 @@ def scalar_observations(
                         )
                     )
                     return
-                redacted, count = redact_value_for_key(key or "", value)
+                redaction_key = key or ""
+                if current_secret_like and not key_is_secret_like(redaction_key):
+                    redaction_key = "secret"
+                redacted, count = redact_value_for_key(redaction_key, value)
                 redactions += count
                 if len(values) >= limit:
                     truncated = True
@@ -118,13 +128,14 @@ def scalar_observations(
                     f"{pointer}/{_escape_pointer(child_key)}",
                     depth + 1,
                     child_key,
+                    current_secret_like,
                 )
             return
         if isinstance(value, list):
             for index, child in enumerate(value):
-                visit(child, f"{pointer}/{index}", depth + 1, None)
+                visit(child, f"{pointer}/{index}", depth + 1, None, current_secret_like)
 
-    visit(document, "", 0, None)
+    visit(document, "", 0, None, False)
     return values, warnings, redactions, truncated
 
 

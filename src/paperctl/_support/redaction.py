@@ -34,7 +34,7 @@ def redact_text(text: str) -> tuple[str, int]:
 
 
 def redact_value_for_key(key: str, value: Any) -> tuple[Any, int]:
-    if key_is_secret_like(key) and isinstance(value, str):
+    if key_is_secret_like(key):
         return REDACTED, 1
     if isinstance(value, str):
         return redact_text(value)
@@ -42,6 +42,8 @@ def redact_value_for_key(key: str, value: Any) -> tuple[Any, int]:
 
 
 def redact_nested_value(value: Any, key: str = "") -> tuple[Any, int]:
+    if key and key_is_secret_like(key):
+        return REDACTED, 1
     if isinstance(value, dict):
         redacted: dict[Any, Any] = {}
         redactions = 0

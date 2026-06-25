@@ -19,6 +19,7 @@ class FingerprintError(ValueError):
 class SourceFile:
     path: str
     file: Path
+    sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ def build_stage_fingerprint(
     extra_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sources = [
-        {"path": source.path, "sha256": sha256_file(source.file)}
+        {"path": source.path, "sha256": source.sha256 or sha256_file(source.file)}
         for source in sorted(source_files or [], key=lambda source: source.path)
     ]
     prerequisites = [

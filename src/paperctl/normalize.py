@@ -597,20 +597,17 @@ def _evidence_fingerprint(
     manifest_path: str,
     parts: PacketParts,
 ) -> dict[str, Any]:
-    inspected_paths = {
-        artifact["path"]
+    inspected_sources = [
+        SourceFile(path=artifact["path"], file=repo / artifact["path"], sha256=artifact["sha256"])
         for artifact in inventory["artifacts"]
         if artifact["file_type"] == "regular" and artifact["kind"] not in {"binary", "unknown"}
-    }
+    ]
     return build_stage_fingerprint(
         stage_name="normalize",
         stage_version=NORMALIZE_STAGE_VERSION,
         schema_version=EVIDENCE_SCHEMA_VERSION,
         relevant_config=_relevant_config(config),
-        source_files=[
-            SourceFile(path=path, file=repo / path)
-            for path in sorted(inspected_paths, key=posix_path_sort_key)
-        ],
+        source_files=sorted(inspected_sources, key=lambda source: posix_path_sort_key(source.path)),
         prerequisite_artifacts=[
             PrerequisiteArtifact(
                 path=manifest_path,
