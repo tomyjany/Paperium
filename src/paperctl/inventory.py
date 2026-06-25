@@ -16,7 +16,7 @@ from paperctl._support.fingerprints import (
 )
 from paperctl._support.hashing import sha256_file
 from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
-from paperctl._support.paths import resolve_repo_relative_path
+from paperctl._support.paths import is_repo_relative_posix, resolve_repo_relative_path
 from paperctl._support.schema import validate_artifact
 from paperctl._support.sorting import posix_path_sort_key
 from paperctl.discovery import _build_manifest
@@ -160,7 +160,7 @@ def inventory_one(
         ) from exc
 
     inventory_path = manifest_entry["inventory_path"]
-    output_path = _resolve_manifest_path(repo, inventory_path)
+    output_path = _resolve_inventory_output_path(repo, inventory_path)
     status = _write_inventory(output_path, inventory, force=force)
     return InventoryWriteResult(
         experiment_path=experiment_path,
@@ -367,6 +367,25 @@ def _resolve_manifest_path(repo: Path, path: str) -> Path:
         if "outside repository" in message:
             raise InventoryError(f"manifest path resolves outside repository: {path}") from exc
         raise InventoryError(f"manifest path must be repo-relative POSIX: {path}") from exc
+
+
+def _resolve_inventory_output_path(repo: Path, path: str) -> Path:
+    if not is_repo_relative_posix(path):
+        raise InventoryError(f"manifest path must be repo-relative POSIX: {path}")
+
+    output_path = _manifest_path_without_following(repo, path)
+    current = repo
+    parts = PurePosixPath(path).parts
+    for index, part in enumerate(parts):
+        current = current / part
+        if current.is_symlink():
+            relative = current.relative_to(repo).as_posix()
+            if index == len(parts) - 1:
+                raise InventoryError(f"inventory output path is a symlink: {path}")
+            raise InventoryError(f"inventory output path contains a symlink: {relative}")
+        if not current.exists():
+            break
+    return output_path
 
 
 def _manifest_path_without_following(repo: Path, path: str) -> Path:

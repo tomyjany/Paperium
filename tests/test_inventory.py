@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -224,6 +225,52 @@ def test_manifest_internal_symlink_experiment_root_is_rejected_after_discovery(t
     assert result.returncode == 2
     assert "manifest experiment path is a symlink" in result.stderr
     assert linked_path in result.stderr
+
+
+def test_inventory_rejects_existing_inventory_output_symlink_without_touching_target(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _discover(repo)
+    entry = next(
+        entry
+        for entry in manifest["experiments"]
+        if entry["experiment_ref"] == "exp001-completed"
+    )
+    target = repo / "paper" / "work" / "target-inventory.json"
+    original_target_bytes = b'{"sentinel":true}\n'
+    target.write_bytes(original_target_bytes)
+    output_path = repo / entry["inventory_path"]
+    output_path.parent.mkdir(parents=True)
+    output_path.symlink_to(os.path.relpath(target, output_path.parent))
+
+    result = _inventory(repo)
+
+    assert result.returncode == 2
+    assert "inventory output path is a symlink" in result.stderr
+    assert entry["inventory_path"] in result.stderr
+    assert target.read_bytes() == original_target_bytes
+
+
+def test_inventory_rejects_symlinked_inventory_output_directory_component(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _discover(repo)
+    redirected = repo / "paper" / "work" / "redirected-inventories"
+    redirected.mkdir()
+    inventory_root = repo / "paper" / "work" / "inventories"
+    inventory_root.mkdir()
+    linked_component = inventory_root / "questions"
+    linked_component.symlink_to(
+        os.path.relpath(redirected, inventory_root),
+        target_is_directory=True,
+    )
+
+    result = _inventory(repo)
+
+    assert result.returncode == 2
+    assert "inventory output path contains a symlink" in result.stderr
+    assert "paper/work/inventories/questions" in result.stderr
+    assert not any(path.is_file() for path in redirected.rglob("*"))
 
 
 def test_fixed_extension_map_classifies_known_kinds_and_binary_unknowns(tmp_path):
