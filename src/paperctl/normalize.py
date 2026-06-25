@@ -344,7 +344,7 @@ def _canonical_from_report_fact(
         fact["value"]
     ):
         return "source_contract_type_mismatch"
-    if json_adapter.value_type(selected) != fact["value_type"]:
+    if not json_adapter.is_expected_type(selected, fact["value_type"]):
         return "source_contract_type_mismatch"
     if selected != fact["value"]:
         return "source_contract_value_mismatch"
@@ -409,7 +409,7 @@ def _apply_configured_canonical_facts(
         fact = {
             "fact_id": fact_id,
             "value": selected,
-            "value_type": json_adapter.value_type(selected),
+            "value_type": _canonical_value_type(selected, mapping["expected_type"]),
             "unit": mapping.get("unit"),
             "source": _value_source(
                 source_path, artifact["sha256"], mapping["selector"], artifact["kind"]
@@ -700,6 +700,12 @@ def _value_source(source_path: str, source_hash: str, selector: str, kind: str) 
 
 def _exclude_selector(excluded: dict[str, set[str]], source_path: str, selector: str) -> None:
     excluded.setdefault(source_path, set()).add(selector)
+
+
+def _canonical_value_type(value: Any, expected_type: str) -> str:
+    if expected_type in {"string", "number", "integer", "boolean", "null"}:
+        return expected_type
+    return json_adapter.value_type(value)
 
 
 def _redact_canonical_fact(fact: dict[str, Any]) -> tuple[dict[str, Any], int]:

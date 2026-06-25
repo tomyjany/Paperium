@@ -224,6 +224,99 @@ def test_validated_report_canonical_facts_are_not_duplicated_as_observed_values(
     assert all(value["source"]["selector"] != "/canonical_facts/0/value" for value in observed)
 
 
+def test_report_number_value_type_accepts_integer_source_value(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp041-report-number-integer")
+    _write_json(
+        experiment / "outputs" / "experiment_report.json",
+        {
+            "schema_version": 1,
+            "execution_status": "completed",
+            "canonical_facts": [
+                {
+                    "fact_id": "whole_number_metric",
+                    "value": 1,
+                    "value_type": "number",
+                    "unit": "count",
+                    "source": {
+                        "path": "outputs/experiment_report.json",
+                        "selector_type": "json_pointer",
+                        "selector": "/canonical_facts/0/value",
+                    },
+                }
+            ],
+        },
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp041-report-number-integer")
+    assert packet["evidence_status"] == "available"
+    assert packet["preanalysis_disposition"] == "analysis_candidate"
+    assert "source_contract_type_mismatch" not in packet["reason_codes"]
+    assert packet["canonical_facts"] == [
+        {
+            "fact_id": "whole_number_metric",
+            "value": 1,
+            "value_type": "number",
+            "unit": "count",
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/"
+                    "exp041-report-number-integer/outputs/experiment_report.json"
+                ),
+                "source_hash": packet["canonical_facts"][0]["source"]["source_hash"],
+                "selector_type": "json_pointer",
+                "selector": "/canonical_facts/0/value",
+                "adapter": "json",
+                "adapter_version": "1",
+            },
+        }
+    ]
+
+
+def test_configured_number_expected_type_emits_integer_source_value_as_number(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp042-configured-number-integer")
+    _write_json(experiment / "outputs" / "metrics.json", {"metric": 1})
+    _add_canonical_mapping(
+        repo,
+        "exp042-configured-number-integer",
+        fact_id="whole_number_metric",
+        source="outputs/metrics.json",
+        selector="/metric",
+        expected_type="number",
+        unit="count",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp042-configured-number-integer")
+    assert packet["canonical_facts"] == [
+        {
+            "fact_id": "whole_number_metric",
+            "value": 1,
+            "value_type": "number",
+            "unit": "count",
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/"
+                    "exp042-configured-number-integer/outputs/metrics.json"
+                ),
+                "source_hash": packet["canonical_facts"][0]["source"]["source_hash"],
+                "selector_type": "json_pointer",
+                "selector": "/metric",
+                "adapter": "json",
+                "adapter_version": "1",
+            },
+        }
+    ]
+
+
 def test_secret_like_canonical_values_are_redacted(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     experiment = _add_experiment(repo, "exp011-secret-canonical")
