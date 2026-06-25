@@ -442,6 +442,46 @@ def test_audit_fingerprint_changes_when_stale_inventory_source_contents_change(t
     ]
 
 
+def test_audit_fingerprint_changes_when_stale_manifest_discovery_source_changes(tmp_path):
+    def audit_after_question_readme_mutation(content: str) -> dict[str, Any]:
+        repo = copy_fixture_repo(tmp_path)
+        _run_pipeline(repo)
+        readme_path = repo / "questions" / "q001-throughput" / "README.md"
+        readme_path.write_text(content, encoding="utf-8")
+
+        result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+        assert result.returncode == 2
+        report = read_json(repo / AUDIT_PATH)
+        assert [issue["code"] for issue in report["deterministic_health"]["issues"]] == [
+            "stale_discovery_manifest"
+        ]
+        assert report["fingerprint"]["stale_manifest_input_sha256"][0]["manifest_path"] == (
+            MANIFEST_PATH.as_posix()
+        )
+        return report
+
+    first_report = audit_after_question_readme_mutation(
+        "# Q001 Throughput\n\nCurrent question text A.\n"
+    )
+    second_report = audit_after_question_readme_mutation(
+        "# Q001 Throughput\n\nCurrent question text B.\n"
+    )
+
+    assert second_report["fingerprint"]["input_counts"] == first_report["fingerprint"][
+        "input_counts"
+    ]
+    assert second_report["fingerprint"]["issue_payload_sha256"] == first_report[
+        "fingerprint"
+    ]["issue_payload_sha256"]
+    assert second_report["fingerprint"]["stale_manifest_input_sha256"] != first_report[
+        "fingerprint"
+    ]["stale_manifest_input_sha256"]
+    assert second_report["fingerprint"]["fingerprint_sha256"] != first_report["fingerprint"][
+        "fingerprint_sha256"
+    ]
+
+
 def test_audit_rejects_repository_root_paper_md_report_without_touching_sentinel(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     config = _load_config_yaml(repo)

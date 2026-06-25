@@ -12,6 +12,7 @@ from paperctl._support.hashing import canonical_json_hash, sha256_bytes, sha256_
 from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
 from paperctl._support.paths import is_repo_relative_posix, resolve_repo_relative_path
 from paperctl._support.schema import validate_artifact
+from paperctl.discovery import _build_manifest
 from paperctl.inventory import InventoryError, _manifest_path, load_manifest
 from paperctl.normalize import NormalizeError, _build_packet, _expected_inventory, _load_fresh_inventory
 from paperctl.rendering import _build_render_state, _render_state_path, render_draft_bytes
@@ -74,6 +75,7 @@ class _AuditContext:
         self.evidence_packets: list[dict[str, Any]] = []
         self.inventory_hashes: list[str] = []
         self.evidence_hashes: list[str] = []
+        self.stale_manifest_inputs: dict[str, dict[str, str]] = {}
         self.stale_source_inputs: dict[str, dict[str, str]] = {}
         self.render_state_hash: str | None = None
         self.draft_hash: str | None = None
@@ -146,7 +148,10 @@ class _AuditContext:
         try:
             return load_manifest(self.repo, self.config)
         except InventoryError as exc:
-            self._issue(_manifest_issue_code(str(exc)), str(exc), path=manifest_path)
+            code = _manifest_issue_code(str(exc))
+            self._issue(code, str(exc), path=manifest_path)
+            if code == "stale_discovery_manifest":
+                self._record_stale_manifest_input(manifest_path)
             return None
 
     def _load_experiment_artifacts(self) -> None:
@@ -387,6 +392,7 @@ class _AuditContext:
             "issue_payload_sha256": canonical_json_hash(self.issues),
             "blocker_payload_sha256": canonical_json_hash(self.blockers),
             "failed_prerequisite_sha256": self._failed_prerequisite_hashes(),
+            "stale_manifest_input_sha256": self._stale_manifest_input_hashes(),
             "stale_source_input_sha256": self._stale_source_input_hashes(),
             "input_counts": {
                 "experiment_count": len(self.manifest["experiments"]) if self.manifest else 0,
@@ -400,6 +406,19 @@ class _AuditContext:
         }
         fingerprint["fingerprint_sha256"] = canonical_json_hash(fingerprint)
         return fingerprint
+
+    def _record_stale_manifest_input(self, manifest_path: str) -> None:
+        questions_root = resolve_repo_relative_path(self.repo, self.config["questions"]["root"])
+        expected = _build_manifest(self.repo, self.config, questions_root)
+        expected_fingerprint = expected["fingerprint"]
+        self.stale_manifest_inputs[manifest_path] = {
+            "manifest_path": manifest_path,
+            "expected_manifest_sha256": sha256_bytes(dump_json_bytes(expected)),
+            "expected_config_sha256": expected_fingerprint["config_sha256"],
+            "expected_directory_entries_sha256": expected_fingerprint[
+                "directory_entries_sha256"
+            ],
+        }
 
     def _record_stale_source_input(self, entry: dict[str, Any], manifest_path: str) -> None:
         experiment_path = entry["experiment_path"]
@@ -426,6 +445,12 @@ class _AuditContext:
             if file_hash is not None:
                 hashes[issue_path] = file_hash
         return [{"path": path, "sha256": hashes[path]} for path in sorted(hashes)]
+
+    def _stale_manifest_input_hashes(self) -> list[dict[str, str]]:
+        return [
+            self.stale_manifest_inputs[manifest_path]
+            for manifest_path in sorted(self.stale_manifest_inputs)
+        ]
 
     def _stale_source_input_hashes(self) -> list[dict[str, str]]:
         return [

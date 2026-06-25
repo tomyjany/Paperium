@@ -61,6 +61,7 @@
         "issue_payload_sha256",
         "blocker_payload_sha256",
         "failed_prerequisite_sha256",
+        "stale_manifest_input_sha256",
         "stale_source_input_sha256",
         "input_counts",
         "deterministic_status",
@@ -105,6 +106,25 @@
             "properties": {
               "path": { "$ref": "#/$defs/relative_path" },
               "sha256": { "$ref": "#/$defs/hash" }
+            }
+          }
+        },
+        "stale_manifest_input_sha256": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "manifest_path",
+              "expected_manifest_sha256",
+              "expected_config_sha256",
+              "expected_directory_entries_sha256"
+            ],
+            "properties": {
+              "manifest_path": { "$ref": "#/$defs/relative_path" },
+              "expected_manifest_sha256": { "$ref": "#/$defs/hash" },
+              "expected_config_sha256": { "$ref": "#/$defs/hash" },
+              "expected_directory_entries_sha256": { "$ref": "#/$defs/hash" }
             }
           }
         },
