@@ -311,6 +311,69 @@ def test_audit_schema_records_deterministic_fingerprint_without_timestamps(tmp_p
     ]
 
 
+def test_audit_fingerprint_changes_when_failure_payload_changes_with_same_counts(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    evidence_path = repo / manifest["experiments"][0]["evidence_path"]
+    evidence_path.unlink()
+
+    missing_result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert missing_result.returncode == 2
+    missing_report = read_json(repo / AUDIT_PATH)
+    assert missing_report["fingerprint"]["input_counts"]["issue_count"] == 1
+    assert missing_report["fingerprint"]["input_counts"]["blocker_count"] == 0
+    missing_fingerprint = missing_report["fingerprint"]["fingerprint_sha256"]
+
+    evidence_path.write_text("{not valid json}\n", encoding="utf-8")
+    malformed_result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert malformed_result.returncode == 2
+    malformed_report = read_json(repo / AUDIT_PATH)
+    assert malformed_report["fingerprint"]["input_counts"] == missing_report["fingerprint"][
+        "input_counts"
+    ]
+    assert malformed_report["fingerprint"]["issue_payload_sha256"] != missing_report[
+        "fingerprint"
+    ]["issue_payload_sha256"]
+    assert malformed_report["fingerprint"]["fingerprint_sha256"] != missing_fingerprint
+
+
+def test_audit_fingerprint_changes_when_malformed_failed_file_contents_change(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    evidence_path = repo / manifest["experiments"][0]["evidence_path"]
+    evidence_path.write_text("{bad: one}\n", encoding="utf-8")
+
+    first_result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert first_result.returncode == 2
+    first_report = read_json(repo / AUDIT_PATH)
+    assert first_report["fingerprint"]["failed_prerequisite_sha256"] == [
+        {
+            "path": manifest["experiments"][0]["evidence_path"],
+            "sha256": sha256_file(evidence_path),
+        }
+    ]
+    first_fingerprint = first_report["fingerprint"]["fingerprint_sha256"]
+
+    evidence_path.write_text("{bad: two}\n", encoding="utf-8")
+    second_result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert second_result.returncode == 2
+    second_report = read_json(repo / AUDIT_PATH)
+    assert second_report["fingerprint"]["input_counts"] == first_report["fingerprint"][
+        "input_counts"
+    ]
+    assert second_report["fingerprint"]["issue_payload_sha256"] == first_report["fingerprint"][
+        "issue_payload_sha256"
+    ]
+    assert second_report["fingerprint"]["failed_prerequisite_sha256"] != first_report[
+        "fingerprint"
+    ]["failed_prerequisite_sha256"]
+    assert second_report["fingerprint"]["fingerprint_sha256"] != first_fingerprint
+
+
 def test_audit_rejects_repository_root_paper_md_report_without_touching_sentinel(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     config = _load_config_yaml(repo)

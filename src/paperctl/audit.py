@@ -378,6 +378,9 @@ class _AuditContext:
             or _hash_if_file(self.repo / render_state_path),
             "draft_path": draft_path,
             "draft_sha256": self.draft_hash or _hash_if_file(self.repo / draft_path),
+            "issue_payload_sha256": canonical_json_hash(self.issues),
+            "blocker_payload_sha256": canonical_json_hash(self.blockers),
+            "failed_prerequisite_sha256": self._failed_prerequisite_hashes(),
             "input_counts": {
                 "experiment_count": len(self.manifest["experiments"]) if self.manifest else 0,
                 "inventory_count": len(self.inventory_hashes),
@@ -390,6 +393,16 @@ class _AuditContext:
         }
         fingerprint["fingerprint_sha256"] = canonical_json_hash(fingerprint)
         return fingerprint
+
+    def _failed_prerequisite_hashes(self) -> list[dict[str, str]]:
+        hashes = {}
+        for issue in self.issues:
+            issue_path = issue["path"]
+            path = self.repo / Path(*PurePosixPath(issue_path).parts)
+            file_hash = _hash_if_file(path)
+            if file_hash is not None:
+                hashes[issue_path] = file_hash
+        return [{"path": path, "sha256": hashes[path]} for path in sorted(hashes)]
 
     def _issue(
         self,

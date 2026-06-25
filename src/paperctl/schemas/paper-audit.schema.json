@@ -58,6 +58,9 @@
         "render_state_sha256",
         "draft_path",
         "draft_sha256",
+        "issue_payload_sha256",
+        "blocker_payload_sha256",
+        "failed_prerequisite_sha256",
         "input_counts",
         "deterministic_status",
         "publication_status",
@@ -90,6 +93,20 @@
         "render_state_sha256": { "$ref": "#/$defs/nullable_hash" },
         "draft_path": { "$ref": "#/$defs/relative_path" },
         "draft_sha256": { "$ref": "#/$defs/nullable_hash" },
+        "issue_payload_sha256": { "$ref": "#/$defs/hash" },
+        "blocker_payload_sha256": { "$ref": "#/$defs/hash" },
+        "failed_prerequisite_sha256": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/relative_path" },
+              "sha256": { "$ref": "#/$defs/hash" }
+            }
+          }
+        },
         "input_counts": {
           "type": "object",
           "additionalProperties": false,
