@@ -445,6 +445,11 @@ def _resolve_audit_report_output(repo: Path, config: dict[str, Any]) -> Path:
         ):
             raise AuditError(message)
     output_path = _resolve_report_output_path(repo, report_path)
+    resolved_output_path = output_path.resolve(strict=False)
+    for protected_path, message in protected_paths:
+        protected_output = _resolve_repo_relative_target(repo, protected_path)
+        if protected_output == output_path or protected_output.resolve(strict=False) == resolved_output_path:
+            raise AuditError(message)
     if output_path.is_dir():
         raise AuditError(f"paper.audit_report output path is a directory: {report_path}")
     return output_path
@@ -468,6 +473,11 @@ def _resolve_report_output_path(repo: Path, path: str) -> Path:
             raise AuditError(f"paper.audit_report output path contains a symlink: {relative}")
         if not current.exists():
             break
+    return repo / Path(*parts)
+
+
+def _resolve_repo_relative_target(repo: Path, path: str) -> Path:
+    parts = PurePosixPath(path).parts
     return repo / Path(*parts)
 
 

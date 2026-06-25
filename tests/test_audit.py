@@ -357,6 +357,42 @@ def test_audit_rejects_report_collision_with_final_output_without_touching_senti
     assert sentinel_path.read_text(encoding="utf-8") == "protected final sentinel\n"
 
 
+def test_audit_rejects_root_paper_symlink_to_report_target_without_touching_sentinel(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    sentinel_path = repo / AUDIT_PATH
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    sentinel_path.write_bytes(b"protected audit target sentinel\n")
+    (repo / FINAL_PATH).unlink()
+    (repo / FINAL_PATH).symlink_to(AUDIT_PATH)
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert sentinel_path.read_bytes() == b"protected audit target sentinel\n"
+    assert "paper.audit_report must not target protected paper.final_output" in result.stderr
+
+
+def test_audit_rejects_configured_final_output_symlink_to_report_target_without_touching_sentinel(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config_yaml(repo)
+    config["paper"]["final_output"] = "paper/final.md"
+    _write_config_yaml(repo, config)
+    sentinel_path = repo / AUDIT_PATH
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    sentinel_path.write_bytes(b"protected audit target sentinel\n")
+    (repo / "paper" / "final.md").symlink_to("PAPER.audit.json")
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert sentinel_path.read_bytes() == b"protected audit target sentinel\n"
+    assert "paper.audit_report must not target protected paper.final_output" in result.stderr
+
+
 def test_audit_rejects_report_collision_with_render_state_before_prerequisites(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     config = _load_config_yaml(repo)
