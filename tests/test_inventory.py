@@ -227,6 +227,36 @@ def test_manifest_internal_symlink_experiment_root_is_rejected_after_discovery(t
     assert linked_path in result.stderr
 
 
+def test_manifest_symlinked_experiment_path_ancestor_is_rejected_before_inventory_write(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    question = repo / "questions" / "q001-throughput"
+    experiments = question / "experiments"
+    real_experiments = question / "experiments-real"
+    experiments.rename(real_experiments)
+    experiments.symlink_to("experiments-real", target_is_directory=True)
+
+    manifest = _discover(repo)
+
+    linked_component = "questions/q001-throughput/experiments"
+    linked_experiment_path = f"{linked_component}/exp001-completed"
+    assert any(
+        entry["experiment_path"] == linked_experiment_path
+        for entry in manifest["experiments"]
+    )
+
+    result = _inventory(repo)
+
+    assert result.returncode == 2
+    assert "manifest experiment path contains a symlink" in result.stderr
+    assert linked_component in result.stderr
+    assert linked_experiment_path in result.stderr
+    inventory_root = repo / "paper" / "work" / "inventories"
+    if inventory_root.exists():
+        assert not any(inventory_root.rglob("*.json"))
+
+
 def test_inventory_rejects_existing_inventory_output_symlink_without_touching_target(
     tmp_path,
 ):

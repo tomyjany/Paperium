@@ -126,6 +126,7 @@ def inventory_one(
     repo = repo.resolve()
     manifest_path = manifest_path or _manifest_path(config)
     experiment_path = manifest_entry["experiment_path"]
+    _validate_manifest_experiment_path_ancestors(repo, experiment_path)
     experiment_dir = _resolve_manifest_path(repo, experiment_path)
     if _manifest_path_without_following(repo, experiment_path).is_symlink():
         raise InventoryError(f"manifest experiment path is a symlink: {experiment_path}")
@@ -367,6 +368,23 @@ def _resolve_manifest_path(repo: Path, path: str) -> Path:
         if "outside repository" in message:
             raise InventoryError(f"manifest path resolves outside repository: {path}") from exc
         raise InventoryError(f"manifest path must be repo-relative POSIX: {path}") from exc
+
+
+def _validate_manifest_experiment_path_ancestors(repo: Path, path: str) -> None:
+    if not is_repo_relative_posix(path):
+        return
+
+    current = repo
+    for part in PurePosixPath(path).parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            relative = current.relative_to(repo).as_posix()
+            raise InventoryError(
+                "manifest experiment path contains a symlink: "
+                f"{path} (component: {relative})"
+            )
+        if not current.exists():
+            break
 
 
 def _resolve_inventory_output_path(repo: Path, path: str) -> Path:
