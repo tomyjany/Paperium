@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -17,14 +18,18 @@ def extract(
     source_path: str,
     source_hash: str,
     preview_rows: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int]:
     previews: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
     redactions = 0
     numeric_fields: dict[str, list[float]] = {}
+    non_finite_counts: dict[str, int] = {}
+    line_count = 0
     try:
         with path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
+                line_count = line_number
                 text = line.rstrip("\n")
                 try:
                     value = json.loads(text)
@@ -46,13 +51,29 @@ def extract(
                 if isinstance(value, dict):
                     for key, child in value.items():
                         if isinstance(child, int | float) and not isinstance(child, bool):
-                            numeric_fields.setdefault(key, []).append(float(child))
+                            numeric_value = float(child)
+                            if math.isfinite(numeric_value):
+                                numeric_fields.setdefault(key, []).append(numeric_value)
+                            else:
+                                non_finite_counts[key] = non_finite_counts.get(key, 0) + 1
+                                warnings.append(
+                                    _record(
+                                        source_path,
+                                        source_hash,
+                                        f"non-finite numeric value omitted from field {key}",
+                                        line_number,
+                                        line_number,
+                                        warning_type="non_finite_numeric",
+                                        field=key,
+                                        numeric_value_kind=_non_finite_kind(numeric_value),
+                                    )
+                                )
     except OSError as exc:
         diagnostics.append(_record(source_path, source_hash, f"could not read JSONL: {exc}", 1, 1))
-        return previews, diagnostics, redactions
+        return previews, diagnostics, warnings, redactions
 
-    for key in sorted(numeric_fields):
-        values = numeric_fields[key]
+    for key in sorted(set(numeric_fields) | set(non_finite_counts)):
+        values = numeric_fields.get(key, [])
         if values:
             diagnostics.append(
                 _record(
@@ -60,14 +81,28 @@ def extract(
                     source_hash,
                     f"numeric field {key}: count={len(values)} min={min(values)} max={max(values)}",
                     1,
-                    max(1, len(values)),
+                    max(1, line_count),
+                    calculation_label="jsonl_numeric_field_summary",
+                    field=key,
+                    inspected_line_start=1,
+                    inspected_line_end=line_count,
+                    inspected_line_count=line_count,
+                    numeric_value_count=len(values),
+                    omitted_value_count=line_count - len(values),
+                    non_finite_omitted_count=non_finite_counts.get(key, 0),
+                    summary={"count": len(values), "max": max(values), "min": min(values)},
                 )
             )
-    return previews, diagnostics, redactions
+    return previews, diagnostics, warnings, redactions
 
 
 def _record(
-    source_path: str, source_hash: str, message: str, line_start: int, line_end: int
+    source_path: str,
+    source_hash: str,
+    message: str,
+    line_start: int,
+    line_end: int,
+    **fields: Any,
 ) -> dict[str, Any]:
     return {
         "source": {
@@ -80,4 +115,11 @@ def _record(
             "adapter_version": ADAPTER_VERSION,
         },
         "message": message,
+        **fields,
     }
+
+
+def _non_finite_kind(value: float) -> str:
+    if math.isnan(value):
+        return "nan"
+    return "infinity"

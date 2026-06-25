@@ -309,6 +309,8 @@ def _apply_default_reports(
                 continue
             result, redactions = _redact_canonical_fact(result)
             parts.redaction_count += redactions
+            if redactions:
+                parts.warnings.append(_redaction_warning(result["source"], redactions))
             parts.canonical_facts.append(result)
             _exclude_selector(
                 excluded_observed_selectors, result["source"]["path"], result["source"]["selector"]
@@ -334,6 +336,10 @@ def _canonical_from_report_fact(
         selected = json_adapter.resolve_pointer(document, source["selector"])
     except (ValueError, KeyError, json_adapter.JsonAdapterError, yaml_adapter.YamlAdapterError):
         return "source_contract_selector_missing"
+    if json_adapter.is_non_finite_number(selected) or json_adapter.is_non_finite_number(
+        fact["value"]
+    ):
+        return "source_contract_type_mismatch"
     if json_adapter.value_type(selected) != fact["value_type"]:
         return "source_contract_type_mismatch"
     if selected != fact["value"]:
@@ -384,6 +390,11 @@ def _apply_configured_canonical_facts(
                 f"canonical selector did not resolve: {source_path} {mapping['selector']}"
             ) from exc
         if not json_adapter.is_expected_type(selected, mapping["expected_type"]):
+            if json_adapter.is_non_finite_number(selected):
+                raise NormalizeError(
+                    f"non-finite numeric value in canonical source: "
+                    f"{source_path} {mapping['selector']}"
+                )
             raise NormalizeError(
                 f"canonical selector type mismatch: {source_path} {mapping['selector']}"
             )
@@ -402,6 +413,8 @@ def _apply_configured_canonical_facts(
         }
         fact, redactions = _redact_canonical_fact(fact)
         parts.redaction_count += redactions
+        if redactions:
+            parts.warnings.append(_redaction_warning(fact["source"], redactions))
         parts.canonical_facts.append(fact)
         _exclude_selector(excluded_observed_selectors, source_path, mapping["selector"])
 
@@ -483,12 +496,14 @@ def _extract_artifacts(
             parts.observed_values.extend(observations)
             parts.warnings.extend(warnings)
             parts.redaction_count += redactions
+            if redactions:
+                parts.warnings.append(_redaction_warning(_none_source(artifact), redactions))
             if truncated:
                 parts.reason_codes.add("normalization_truncated")
             continue
         if artifact["kind"] == "csv":
             _record_adapter(parts, "csv")
-            previews, diagnostics, redactions = csv_adapter.extract(
+            previews, diagnostics, warnings, redactions = csv_adapter.extract(
                 path,
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
@@ -496,7 +511,7 @@ def _extract_artifacts(
             )
         elif artifact["kind"] == "jsonl":
             _record_adapter(parts, "jsonl")
-            previews, diagnostics, redactions = jsonl_adapter.extract(
+            previews, diagnostics, warnings, redactions = jsonl_adapter.extract(
                 path,
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
@@ -504,7 +519,7 @@ def _extract_artifacts(
             )
         elif artifact["kind"] == "markdown":
             _record_adapter(parts, "markdown")
-            previews, diagnostics, redactions = markdown_adapter.extract(
+            previews, diagnostics, warnings, redactions = markdown_adapter.extract(
                 path,
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
@@ -512,7 +527,7 @@ def _extract_artifacts(
             )
         else:
             _record_adapter(parts, "log")
-            previews, diagnostics, redactions = log_adapter.extract(
+            previews, diagnostics, warnings, redactions = log_adapter.extract(
                 path,
                 source_path=artifact["path"],
                 source_hash=artifact["sha256"],
@@ -521,7 +536,10 @@ def _extract_artifacts(
             )
         parts.previews.extend(previews)
         parts.diagnostics.extend(diagnostics)
+        parts.warnings.extend(warnings)
         parts.redaction_count += redactions
+        if redactions:
+            parts.warnings.append(_redaction_warning(_none_source(artifact), redactions))
 
 
 def _finalize_status(parts: PacketParts) -> None:
@@ -687,16 +705,27 @@ def _selector_leaf(selector: str) -> str:
 
 
 def _none_record(artifact: dict[str, Any], message: str) -> dict[str, Any]:
+    return {"source": _none_source(artifact), "message": message}
+
+
+def _none_source(artifact: dict[str, Any]) -> dict[str, Any]:
     return {
-        "source": {
-            "path": artifact["path"],
-            "source_hash": artifact.get("sha256"),
-            "selector_type": "none",
-            "selector": None,
-            "adapter": artifact["kind"],
-            "adapter_version": ADAPTER_VERSIONS.get(artifact["kind"], "1"),
-        },
-        "message": message,
+        "path": artifact["path"],
+        "source_hash": artifact.get("sha256"),
+        "selector_type": "none",
+        "selector": None,
+        "adapter": artifact["kind"],
+        "adapter_version": ADAPTER_VERSIONS.get(artifact["kind"], "1"),
+    }
+
+
+def _redaction_warning(source: dict[str, Any], redaction_count: int) -> dict[str, Any]:
+    return {
+        "source": dict(source),
+        "message": f"redacted {redaction_count} secret-like value(s)",
+        "warning_type": "redaction",
+        "redaction_category": "secret_like",
+        "redaction_count": redaction_count,
     }
 
 

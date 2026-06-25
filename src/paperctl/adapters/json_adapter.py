@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,18 @@ def scalar_observations(
             return
         if _is_scalar(value):
             if not _is_excluded(pointer, excluded):
+                if is_non_finite_number(value):
+                    warnings.append(
+                        _record(
+                            source_path,
+                            source_hash,
+                            pointer,
+                            "non-finite numeric value omitted",
+                            warning_type="non_finite_numeric",
+                            numeric_value_kind=non_finite_kind(value),
+                        )
+                    )
+                    return
                 redacted, count = redact_value_for_key(key or "", value)
                 redactions += count
                 if len(values) >= limit:
@@ -126,13 +139,27 @@ def value_type(value: Any) -> str:
     return "string"
 
 
+def is_non_finite_number(value: Any) -> bool:
+    return isinstance(value, float) and not math.isfinite(value)
+
+
+def non_finite_kind(value: float) -> str:
+    if math.isnan(value):
+        return "nan"
+    return "infinity"
+
+
 def is_expected_type(value: Any, expected_type: str) -> bool:
     if expected_type == "object":
         return isinstance(value, dict)
     if expected_type == "array":
         return isinstance(value, list)
     if expected_type == "number":
-        return isinstance(value, int | float) and not isinstance(value, bool)
+        return (
+            isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and not is_non_finite_number(value)
+        )
     if expected_type == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if expected_type == "boolean":
@@ -144,7 +171,13 @@ def is_expected_type(value: Any, expected_type: str) -> bool:
     return False
 
 
-def _record(source_path: str, source_hash: str, selector: str, message: str) -> dict[str, Any]:
+def _record(
+    source_path: str,
+    source_hash: str,
+    selector: str,
+    message: str,
+    **fields: Any,
+) -> dict[str, Any]:
     return {
         "source": {
             "path": source_path,
@@ -155,6 +188,7 @@ def _record(source_path: str, source_hash: str, selector: str, message: str) -> 
             "adapter_version": ADAPTER_VERSION,
         },
         "message": message,
+        **fields,
     }
 
 

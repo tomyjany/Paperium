@@ -16,9 +16,10 @@ def extract(
     source_path: str,
     source_hash: str,
     preview_lines: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int]:
     previews: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
     redactions = 0
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -26,7 +27,7 @@ def extract(
         diagnostics.append(
             _record(source_path, source_hash, f"could not read Markdown: {exc}", 1, 1)
         )
-        return previews, diagnostics, redactions
+        return previews, diagnostics, warnings, redactions
 
     for line_number, line in enumerate(lines, start=1):
         if len(previews) >= preview_lines:
@@ -59,7 +60,7 @@ def extract(
     diagnostics.append(
         _record(source_path, source_hash, f"line_count={len(lines)}", 1, max(1, len(lines)))
     )
-    return previews, diagnostics, redactions
+    return previews, diagnostics, warnings, redactions
 
 
 def _record(

@@ -475,10 +475,10 @@ def test_csv_and_jsonl_numeric_summaries_are_diagnostics_not_observed_values(tmp
     experiment = _add_experiment(repo, "exp030-tabular")
     (experiment / "outputs").mkdir()
     (experiment / "outputs" / "table.csv").write_text(
-        "name,score\nalpha,1.5\nbeta,2.5\n", encoding="utf-8"
+        "name,score\nalpha,1.5\nbeta,\ngamma,2.5\n", encoding="utf-8"
     )
     (experiment / "outputs" / "events.jsonl").write_text(
-        '{"score": 1}\n{"score": 2}\n', encoding="utf-8"
+        '{"score": 1}\n{"score": "skip"}\n{"score": 2}\n', encoding="utf-8"
     )
     manifest = _run_prerequisites(repo)
 
@@ -488,9 +488,75 @@ def test_csv_and_jsonl_numeric_summaries_are_diagnostics_not_observed_values(tmp
     packet = _packet(repo, manifest, "exp030-tabular")
     assert packet["evidence_status"] == "available"
     assert packet["observed_values"] == []
-    messages = [diagnostic["message"] for diagnostic in packet["diagnostics"]]
-    assert any("numeric column score" in message for message in messages)
-    assert any("numeric field score" in message for message in messages)
+    csv_summary = next(
+        diagnostic
+        for diagnostic in packet["diagnostics"]
+        if diagnostic.get("calculation_label") == "csv_numeric_column_summary"
+        and diagnostic.get("column") == "score"
+    )
+    assert csv_summary["source"]["path"].endswith("/outputs/table.csv")
+    assert csv_summary["source"]["source_hash"].startswith("sha256:")
+    assert csv_summary["source"]["line_start"] == 2
+    assert csv_summary["source"]["line_end"] == 4
+    assert csv_summary["inspected_row_start"] == 1
+    assert csv_summary["inspected_row_end"] == 3
+    assert csv_summary["inspected_row_count"] == 3
+    assert csv_summary["numeric_value_count"] == 2
+    assert csv_summary["omitted_value_count"] == 1
+    assert csv_summary["summary"] == {"count": 2, "max": 2.5, "min": 1.5}
+    jsonl_summary = next(
+        diagnostic
+        for diagnostic in packet["diagnostics"]
+        if diagnostic.get("calculation_label") == "jsonl_numeric_field_summary"
+        and diagnostic.get("field") == "score"
+    )
+    assert jsonl_summary["source"]["path"].endswith("/outputs/events.jsonl")
+    assert jsonl_summary["source"]["source_hash"].startswith("sha256:")
+    assert jsonl_summary["source"]["line_start"] == 1
+    assert jsonl_summary["source"]["line_end"] == 3
+    assert jsonl_summary["inspected_line_start"] == 1
+    assert jsonl_summary["inspected_line_end"] == 3
+    assert jsonl_summary["inspected_line_count"] == 3
+    assert jsonl_summary["numeric_value_count"] == 2
+    assert jsonl_summary["omitted_value_count"] == 1
+    assert jsonl_summary["summary"] == {"count": 2, "max": 2.0, "min": 1.0}
+
+
+def test_log_diagnostics_record_fixed_warning_error_patterns_by_line(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp036-log-patterns")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "run.log").write_text(
+        "setup\n"
+        "WARN cache warmed slowly\n"
+        "ERROR failed once\n"
+        "WARNING retrying\n"
+        "Fatal stop\n"
+        "Traceback (most recent call last):\n",
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp036-log-patterns")
+    matches = [
+        diagnostic
+        for diagnostic in packet["diagnostics"]
+        if diagnostic.get("calculation_label") == "log_pattern_match"
+    ]
+    assert [
+        (match["pattern_label"], match["source"]["line_start"], match["source"]["line_end"])
+        for match in matches
+    ] == [
+        ("WARN", 2, 2),
+        ("ERROR", 3, 3),
+        ("WARNING", 4, 4),
+        ("FATAL", 5, 5),
+        ("TRACEBACK", 6, 6),
+    ]
+    assert all(match["source"]["source_hash"].startswith("sha256:") for match in matches)
 
 
 def test_csv_and_jsonl_previews_redact_secret_columns_and_keys(tmp_path):
@@ -518,6 +584,132 @@ def test_csv_and_jsonl_previews_redact_secret_columns_and_keys(tmp_path):
     assert "nested-token" not in serialized
     assert packet["counts"]["redaction_count"] == 4
     assert serialized.count("[REDACTED]") >= 4
+    redaction_warnings = [
+        warning for warning in packet["warnings"] if warning.get("warning_type") == "redaction"
+    ]
+    assert sorted(
+        (warning["source"]["path"].rsplit("/", 1)[-1], warning["redaction_count"])
+        for warning in redaction_warnings
+    ) == [("events.jsonl", 2), ("table.csv", 2)]
+    assert all(warning["redaction_category"] == "secret_like" for warning in redaction_warnings)
+    assert "sk-csv-key" not in json.dumps(redaction_warnings, sort_keys=True)
+
+
+def test_secret_like_canonical_redaction_records_warning_without_secret_value(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp037-secret-canonical-warning")
+    _write_json(experiment / "outputs" / "metrics.json", {"api_key": "sk-configured-secret"})
+    _add_canonical_mapping(
+        repo,
+        "exp037-secret-canonical-warning",
+        fact_id="api_key",
+        selector="/api_key",
+        expected_type="string",
+        unit=None,
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp037-secret-canonical-warning")
+    serialized = json.dumps(packet, sort_keys=True)
+    assert "sk-configured-secret" not in serialized
+    warnings = [
+        warning for warning in packet["warnings"] if warning.get("warning_type") == "redaction"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0]["source"]["selector"] == "/api_key"
+    assert warnings[0]["redaction_count"] == 1
+
+
+def test_json_yaml_observed_non_finite_numbers_are_warnings_not_values(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_bare_experiment(repo, "exp038-non-finite-observed")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "metrics.json").write_text(
+        '{"metric": NaN, "valid": 1}\n', encoding="utf-8"
+    )
+    (experiment / "outputs" / "metrics.yaml").write_text(
+        "metric: .inf\nvalid: 2\n", encoding="utf-8"
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp038-non-finite-observed")
+    assert {value["source"]["selector"] for value in packet["observed_values"]} == {
+        "/valid",
+    }
+    warnings = [
+        warning
+        for warning in packet["warnings"]
+        if warning.get("warning_type") == "non_finite_numeric"
+    ]
+    assert [
+        (warning["source"]["path"].rsplit("/", 1)[-1], warning["source"]["selector"])
+        for warning in warnings
+    ] == [("metrics.json", "/metric"), ("metrics.yaml", "/metric")]
+
+
+def test_configured_canonical_non_finite_number_fails_before_serialization(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp039-non-finite-canonical")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "metrics.json").write_text('{"metric": Infinity}\n', encoding="utf-8")
+    _add_canonical_mapping(repo, "exp039-non-finite-canonical")
+    _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 2
+    assert "non-finite numeric value" in result.stderr
+    assert (
+        "questions/q001-throughput/experiments/exp039-non-finite-canonical/outputs/metrics.json"
+        in (result.stderr)
+    )
+
+
+def test_csv_jsonl_numeric_diagnostics_warn_and_omit_non_finite_values(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = _add_experiment(repo, "exp040-non-finite-tabular")
+    (experiment / "outputs").mkdir()
+    (experiment / "outputs" / "table.csv").write_text(
+        "score\n1\nNaN\nInfinity\n2\n", encoding="utf-8"
+    )
+    (experiment / "outputs" / "events.jsonl").write_text(
+        '{"score": 1}\n{"score": NaN}\n{"score": Infinity}\n{"score": 2}\n',
+        encoding="utf-8",
+    )
+    manifest = _run_prerequisites(repo)
+
+    result = _normalize(repo)
+
+    assert result.returncode == 0, result.stderr
+    packet = _packet(repo, manifest, "exp040-non-finite-tabular")
+    warnings = [
+        warning
+        for warning in packet["warnings"]
+        if warning.get("warning_type") == "non_finite_numeric"
+    ]
+    assert sorted(
+        (warning["source"]["path"].rsplit("/", 1)[-1], warning["source"]["line_start"])
+        for warning in warnings
+    ) == [
+        ("events.jsonl", 2),
+        ("events.jsonl", 3),
+        ("table.csv", 3),
+        ("table.csv", 4),
+    ]
+    summaries = [
+        diagnostic
+        for diagnostic in packet["diagnostics"]
+        if diagnostic.get("calculation_label")
+        in {"csv_numeric_column_summary", "jsonl_numeric_field_summary"}
+    ]
+    assert {summary["non_finite_omitted_count"] for summary in summaries} == {2}
+    assert all(summary["summary"]["count"] == 2 for summary in summaries)
 
 
 def test_evidence_fingerprint_records_only_adapters_used_by_packet(tmp_path):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +18,19 @@ def extract(
     source_path: str,
     source_hash: str,
     preview_rows: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int]:
     previews: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
     redactions = 0
     numeric_columns: dict[str, list[float]] = {}
+    non_finite_counts: dict[str, int] = {}
+    row_count = 0
     try:
         with path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             for index, row in enumerate(reader, start=1):
+                row_count = index
                 if index <= preview_rows:
                     redacted_row: dict[str, str] = {}
                     for key, value in row.items():
@@ -39,30 +44,61 @@ def extract(
                     )
                 for key, value in row.items():
                     try:
-                        numeric_columns.setdefault(key, []).append(float(value))
+                        numeric_value = float(value)
                     except (TypeError, ValueError):
                         pass
+                    else:
+                        if math.isfinite(numeric_value):
+                            numeric_columns.setdefault(key, []).append(numeric_value)
+                        else:
+                            non_finite_counts[key] = non_finite_counts.get(key, 0) + 1
+                            warnings.append(
+                                _record(
+                                    source_path,
+                                    source_hash,
+                                    f"non-finite numeric value omitted from column {key}",
+                                    index + 1,
+                                    index + 1,
+                                    warning_type="non_finite_numeric",
+                                    column=key,
+                                    numeric_value_kind=_non_finite_kind(numeric_value),
+                                )
+                            )
     except OSError as exc:
         diagnostics.append(_record(source_path, source_hash, f"could not read CSV: {exc}", 1, 1))
-        return previews, diagnostics, redactions
+        return previews, diagnostics, warnings, redactions
 
-    for key in sorted(numeric_columns):
-        values = numeric_columns[key]
+    for key in sorted(set(numeric_columns) | set(non_finite_counts)):
+        values = numeric_columns.get(key, [])
         if values:
             diagnostics.append(
                 _record(
                     source_path,
                     source_hash,
                     f"numeric column {key}: count={len(values)} min={min(values)} max={max(values)}",
-                    1,
-                    max(1, len(values)),
+                    2,
+                    row_count + 1,
+                    calculation_label="csv_numeric_column_summary",
+                    column=key,
+                    inspected_row_start=1,
+                    inspected_row_end=row_count,
+                    inspected_row_count=row_count,
+                    numeric_value_count=len(values),
+                    omitted_value_count=row_count - len(values),
+                    non_finite_omitted_count=non_finite_counts.get(key, 0),
+                    summary={"count": len(values), "max": max(values), "min": min(values)},
                 )
             )
-    return previews, diagnostics, redactions
+    return previews, diagnostics, warnings, redactions
 
 
 def _record(
-    source_path: str, source_hash: str, message: str, line_start: int, line_end: int
+    source_path: str,
+    source_hash: str,
+    message: str,
+    line_start: int,
+    line_end: int,
+    **fields: Any,
 ) -> dict[str, Any]:
     return {
         "source": {
@@ -75,4 +111,11 @@ def _record(
             "adapter_version": ADAPTER_VERSION,
         },
         "message": message,
+        **fields,
     }
+
+
+def _non_finite_kind(value: float) -> str:
+    if math.isnan(value):
+        return "nan"
+    return "infinity"
