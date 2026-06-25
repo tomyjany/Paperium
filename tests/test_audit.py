@@ -581,6 +581,62 @@ def test_audit_rejects_report_collision_with_render_state_before_prerequisites(t
     assert "missing discovery manifest" not in result.stderr
 
 
+def test_audit_rejects_report_collision_with_discovery_manifest_without_touching_manifest(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_pipeline(repo)
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = "paper/work/manifest.json"
+    _write_config_yaml(repo, config)
+    manifest_path = repo / MANIFEST_PATH
+    manifest_before = manifest_path.read_bytes()
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target discovery manifest" in result.stderr
+    assert manifest_path.read_bytes() == manifest_before
+
+
+def test_audit_rejects_report_collision_with_manifest_inventory_without_touching_inventory(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    inventory_path = Path(manifest["experiments"][0]["inventory_path"])
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = inventory_path.as_posix()
+    _write_config_yaml(repo, config)
+    absolute_inventory_path = repo / inventory_path
+    inventory_before = absolute_inventory_path.read_bytes()
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target manifest-recorded inventory_path" in result.stderr
+    assert absolute_inventory_path.read_bytes() == inventory_before
+
+
+def test_audit_rejects_report_collision_with_manifest_evidence_without_touching_evidence(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    evidence_path = Path(manifest["experiments"][0]["evidence_path"])
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = evidence_path.as_posix()
+    _write_config_yaml(repo, config)
+    absolute_evidence_path = repo / evidence_path
+    evidence_before = absolute_evidence_path.read_bytes()
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target manifest-recorded evidence_path" in result.stderr
+    assert absolute_evidence_path.read_bytes() == evidence_before
+
+
 def test_audit_rejects_symlinked_report_output_directory_component(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     (repo / "paper").mkdir(exist_ok=True)

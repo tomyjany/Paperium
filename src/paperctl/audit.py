@@ -46,6 +46,14 @@ def audit(repo: Path, config: dict[str, Any], stage: str | None = None) -> Audit
         raise AuditError(f"invalid audit stage: {requested_stage}")
 
     report_output = _resolve_audit_report_output(repo, config)
+    manifest_for_output_protection = _load_manifest_for_output_protection(repo, config)
+    if manifest_for_output_protection is not None:
+        _reject_manifest_artifact_collisions(
+            repo,
+            config,
+            manifest_for_output_protection,
+            report_output,
+        )
     context = _AuditContext(repo=repo, config=config)
     context.run()
     report = context.report(requested_stage)
@@ -504,22 +512,92 @@ def _resolve_audit_report_output(repo: Path, config: dict[str, Any]) -> Path:
             _render_state_path(config),
             "paper.audit_report must not target render state output",
         ),
+        (
+            _manifest_path(config),
+            "paper.audit_report must not target discovery manifest",
+        ),
     ]
+    output_path = _resolve_report_output_path(repo, report_path)
+    _reject_protected_path_collisions(
+        repo,
+        output_path,
+        report_relative,
+        protected_paths,
+    )
+    if output_path.is_dir():
+        raise AuditError(f"paper.audit_report output path is a directory: {report_path}")
+    return output_path
+
+
+def _reject_protected_path_collisions(
+    repo: Path,
+    output_path: Path,
+    report_relative: str,
+    protected_paths: list[tuple[str, str]],
+) -> None:
+    resolved_output_path = output_path.resolve(strict=False)
     for protected_path, message in protected_paths:
         if report_relative == _normalized_repo_relative_path(
             protected_path,
             label="protected output",
         ):
             raise AuditError(message)
-    output_path = _resolve_report_output_path(repo, report_path)
-    resolved_output_path = output_path.resolve(strict=False)
     for protected_path, message in protected_paths:
         protected_output = _resolve_repo_relative_target(repo, protected_path)
-        if protected_output == output_path or protected_output.resolve(strict=False) == resolved_output_path:
+        if (
+            protected_output == output_path
+            or protected_output.resolve(strict=False) == resolved_output_path
+        ):
             raise AuditError(message)
-    if output_path.is_dir():
-        raise AuditError(f"paper.audit_report output path is a directory: {report_path}")
-    return output_path
+
+
+def _load_manifest_for_output_protection(
+    repo: Path,
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    manifest_path = _manifest_path(config)
+    try:
+        with (repo / manifest_path).open(encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    try:
+        validate_artifact("manifest.schema.json", manifest)
+    except ValidationError:
+        return None
+    return manifest
+
+
+def _reject_manifest_artifact_collisions(
+    repo: Path,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    output_path: Path,
+) -> None:
+    report_relative = _normalized_repo_relative_path(
+        config["paper"]["audit_report"],
+        label="paper.audit_report",
+    )
+    protected_paths: list[tuple[str, str]] = []
+    for entry in manifest["experiments"]:
+        protected_paths.extend(
+            [
+                (
+                    entry["inventory_path"],
+                    "paper.audit_report must not target manifest-recorded inventory_path",
+                ),
+                (
+                    entry["evidence_path"],
+                    "paper.audit_report must not target manifest-recorded evidence_path",
+                ),
+            ]
+        )
+    _reject_protected_path_collisions(
+        repo,
+        output_path,
+        report_relative,
+        protected_paths,
+    )
 
 
 def _normalized_repo_relative_path(path: str, *, label: str) -> str:
