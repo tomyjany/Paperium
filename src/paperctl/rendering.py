@@ -76,8 +76,10 @@ def render(repo: Path, config: dict[str, Any], force: bool = False) -> RenderRes
     state_output = _resolve_output_path(repo, state_relative, label="render state")
     status = _write_outputs(
         draft_output=draft_output,
+        draft_path=draft_path,
         draft_bytes=draft_bytes,
         state_output=state_output,
+        state_path=state_relative,
         render_state=render_state,
         force=force,
     )
@@ -474,18 +476,22 @@ def _build_render_state(
 def _write_outputs(
     *,
     draft_output: Path,
+    draft_path: str,
     draft_bytes: bytes,
     state_output: Path,
+    state_path: str,
     render_state: dict[str, Any],
     force: bool,
 ) -> str:
     state_bytes = dump_json_bytes(render_state)
+    _reject_existing_output_directory(draft_output, draft_path, label="draft")
+    _reject_existing_output_directory(state_output, state_path, label="render state")
     if (
         not force
         and draft_output.exists()
         and state_output.exists()
-        and draft_output.read_bytes() == draft_bytes
-        and state_output.read_bytes() == state_bytes
+        and _read_existing_output(draft_output, draft_path, label="draft") == draft_bytes
+        and _read_existing_output(state_output, state_path, label="render state") == state_bytes
     ):
         return "unchanged"
     try:
@@ -494,6 +500,18 @@ def _write_outputs(
     except OSError as exc:
         raise RenderError(f"could not write render outputs: {exc}") from exc
     return "wrote"
+
+
+def _reject_existing_output_directory(path: Path, display_path: str, *, label: str) -> None:
+    if path.is_dir():
+        raise RenderError(f"{label} output path is a directory: {display_path}")
+
+
+def _read_existing_output(path: Path, display_path: str, *, label: str) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise RenderError(f"could not read existing {label} output {display_path}: {exc}") from exc
 
 
 def _resolve_output_path(repo: Path, path: str, *, label: str) -> Path:

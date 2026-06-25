@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
-from paperctl._support.hashing import sha256_file
+from paperctl._support.hashing import canonical_json_hash, sha256_file
 from paperctl._support.schema import validate_artifact
 
 
@@ -245,6 +245,40 @@ def test_render_writes_bounded_preanalysis_draft_and_state_without_touching_fina
     assert state["fingerprint"]["evidence_packet_sha256"] == state["evidence_packet_sha256"]
     assert state["fingerprint"]["config_sha256"].startswith("sha256:")
     assert state["fingerprint"]["fingerprint_sha256"].startswith("sha256:")
+    fingerprint_payload = dict(state["fingerprint"])
+    fingerprint_sha256 = fingerprint_payload.pop("fingerprint_sha256")
+    assert fingerprint_sha256 == canonical_json_hash(fingerprint_payload)
+
+
+def test_render_rejects_existing_draft_output_directory_without_traceback(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_prerequisites(repo)
+    (repo / DRAFT_PATH).mkdir()
+    (repo / RENDER_STATE_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (repo / RENDER_STATE_PATH).write_text("{}\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "draft output path is a directory: PAPER.draft.md" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert (repo / DRAFT_PATH).is_dir()
+
+
+def test_render_rejects_existing_render_state_output_directory_without_traceback(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_prerequisites(repo)
+    first = run_paperctl(repo, "render")
+    assert first.returncode == 0, first.stderr
+    (repo / RENDER_STATE_PATH).unlink()
+    (repo / RENDER_STATE_PATH).mkdir()
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "render state output path is a directory: paper/work/render-state.json" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert (repo / RENDER_STATE_PATH).is_dir()
 
 
 def test_render_escapes_untrusted_markdown_syntax_in_tables(tmp_path):
