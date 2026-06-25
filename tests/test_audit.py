@@ -374,6 +374,74 @@ def test_audit_fingerprint_changes_when_malformed_failed_file_contents_change(tm
     assert second_report["fingerprint"]["fingerprint_sha256"] != first_fingerprint
 
 
+def test_audit_fingerprint_changes_when_stale_inventory_source_contents_change(tmp_path):
+    def audit_after_source_mutation(content: str) -> dict[str, Any]:
+        repo = copy_fixture_repo(tmp_path)
+        manifest = _run_pipeline(repo)
+        first_entry = manifest["experiments"][0]
+        source_path = repo / first_entry["experiment_path"] / "outputs" / "experiment_report.json"
+        source_path.write_text(content, encoding="utf-8")
+
+        result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+        assert result.returncode == 2
+        report = read_json(repo / AUDIT_PATH)
+        assert [issue["code"] for issue in report["deterministic_health"]["issues"]] == [
+            "stale_inventory"
+        ]
+        return report
+
+    first_report = audit_after_source_mutation(
+        """{
+  "schema_version": 1,
+  "execution_status": "completed",
+  "canonical_facts": [
+    {
+      "fact_id": "throughput_pages_per_second",
+      "value": 42.51,
+      "value_type": "number",
+      "unit": "pages/s",
+      "source": {
+        "path": "outputs/experiment_report.json",
+        "selector_type": "json_pointer",
+        "selector": "/canonical_facts/0/value"
+      }
+    }
+  ]
+}
+"""
+    )
+    second_report = audit_after_source_mutation(
+        """{
+  "schema_version": 1,
+  "execution_status": "completed",
+  "canonical_facts": [
+    {
+      "fact_id": "throughput_pages_per_second",
+      "value": 42.52,
+      "value_type": "number",
+      "unit": "pages/s",
+      "source": {
+        "path": "outputs/experiment_report.json",
+        "selector_type": "json_pointer",
+        "selector": "/canonical_facts/0/value"
+      }
+    }
+  ]
+}
+"""
+    )
+    assert second_report["fingerprint"]["input_counts"] == first_report["fingerprint"][
+        "input_counts"
+    ]
+    assert second_report["fingerprint"]["issue_payload_sha256"] == first_report[
+        "fingerprint"
+    ]["issue_payload_sha256"]
+    assert second_report["fingerprint"]["fingerprint_sha256"] != first_report["fingerprint"][
+        "fingerprint_sha256"
+    ]
+
+
 def test_audit_rejects_repository_root_paper_md_report_without_touching_sentinel(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     config = _load_config_yaml(repo)

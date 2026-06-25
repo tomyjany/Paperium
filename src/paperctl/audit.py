@@ -13,7 +13,7 @@ from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
 from paperctl._support.paths import is_repo_relative_posix, resolve_repo_relative_path
 from paperctl._support.schema import validate_artifact
 from paperctl.inventory import InventoryError, _manifest_path, load_manifest
-from paperctl.normalize import NormalizeError, _build_packet, _load_fresh_inventory
+from paperctl.normalize import NormalizeError, _build_packet, _expected_inventory, _load_fresh_inventory
 from paperctl.rendering import _build_render_state, _render_state_path, render_draft_bytes
 
 
@@ -74,6 +74,7 @@ class _AuditContext:
         self.evidence_packets: list[dict[str, Any]] = []
         self.inventory_hashes: list[str] = []
         self.evidence_hashes: list[str] = []
+        self.stale_source_inputs: dict[str, dict[str, str]] = {}
         self.render_state_hash: str | None = None
         self.draft_hash: str | None = None
 
@@ -166,12 +167,15 @@ class _AuditContext:
         try:
             inventory = _load_fresh_inventory(self.repo, self.config, entry, manifest_path)
         except NormalizeError as exc:
+            code = _inventory_issue_code(str(exc))
             self._issue(
-                _inventory_issue_code(str(exc)),
+                code,
                 str(exc),
                 path=inventory_path,
                 entry=entry,
             )
+            if code == "stale_inventory":
+                self._record_stale_source_input(entry, manifest_path)
             return None
         self.inventory_hashes.append(sha256_file(self.repo / inventory_path))
         return inventory
@@ -241,6 +245,7 @@ class _AuditContext:
                 path=evidence_path,
                 entry=entry,
             )
+            self._record_stale_source_input(entry, manifest_path)
             return None
         if dump_json_bytes(packet) != dump_json_bytes(expected):
             self._issue(
@@ -249,6 +254,7 @@ class _AuditContext:
                 path=evidence_path,
                 entry=entry,
             )
+            self._record_stale_source_input(entry, manifest_path)
             return None
         self.evidence_hashes.append(sha256_file(absolute_path))
         return packet
@@ -381,6 +387,7 @@ class _AuditContext:
             "issue_payload_sha256": canonical_json_hash(self.issues),
             "blocker_payload_sha256": canonical_json_hash(self.blockers),
             "failed_prerequisite_sha256": self._failed_prerequisite_hashes(),
+            "stale_source_input_sha256": self._stale_source_input_hashes(),
             "input_counts": {
                 "experiment_count": len(self.manifest["experiments"]) if self.manifest else 0,
                 "inventory_count": len(self.inventory_hashes),
@@ -394,6 +401,22 @@ class _AuditContext:
         fingerprint["fingerprint_sha256"] = canonical_json_hash(fingerprint)
         return fingerprint
 
+    def _record_stale_source_input(self, entry: dict[str, Any], manifest_path: str) -> None:
+        experiment_path = entry["experiment_path"]
+        try:
+            expected = _expected_inventory(self.repo, self.config, entry, manifest_path)
+        except NormalizeError:
+            return
+        inventory_fingerprint = expected["fingerprint"]
+        artifact_listing = inventory_fingerprint["extra_inputs"]["artifact_listing"]
+        self.stale_source_inputs[experiment_path] = {
+            "experiment_path": experiment_path,
+            "inventory_path": entry["inventory_path"],
+            "source_files_sha256": inventory_fingerprint["source_files_sha256"],
+            "artifact_listing_sha256": canonical_json_hash(artifact_listing),
+            "inventory_fingerprint_sha256": inventory_fingerprint["fingerprint_sha256"],
+        }
+
     def _failed_prerequisite_hashes(self) -> list[dict[str, str]]:
         hashes = {}
         for issue in self.issues:
@@ -403,6 +426,12 @@ class _AuditContext:
             if file_hash is not None:
                 hashes[issue_path] = file_hash
         return [{"path": path, "sha256": hashes[path]} for path in sorted(hashes)]
+
+    def _stale_source_input_hashes(self) -> list[dict[str, str]]:
+        return [
+            self.stale_source_inputs[experiment_path]
+            for experiment_path in sorted(self.stale_source_inputs)
+        ]
 
     def _issue(
         self,

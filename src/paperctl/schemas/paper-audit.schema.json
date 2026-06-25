@@ -61,6 +61,7 @@
         "issue_payload_sha256",
         "blocker_payload_sha256",
         "failed_prerequisite_sha256",
+        "stale_source_input_sha256",
         "input_counts",
         "deterministic_status",
         "publication_status",
@@ -104,6 +105,27 @@
             "properties": {
               "path": { "$ref": "#/$defs/relative_path" },
               "sha256": { "$ref": "#/$defs/hash" }
+            }
+          }
+        },
+        "stale_source_input_sha256": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "experiment_path",
+              "inventory_path",
+              "source_files_sha256",
+              "artifact_listing_sha256",
+              "inventory_fingerprint_sha256"
+            ],
+            "properties": {
+              "experiment_path": { "$ref": "#/$defs/relative_path" },
+              "inventory_path": { "$ref": "#/$defs/relative_path" },
+              "source_files_sha256": { "$ref": "#/$defs/hash" },
+              "artifact_listing_sha256": { "$ref": "#/$defs/hash" },
+              "inventory_fingerprint_sha256": { "$ref": "#/$defs/hash" }
             }
           }
         },
