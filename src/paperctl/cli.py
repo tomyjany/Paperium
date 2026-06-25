@@ -2,7 +2,8 @@ import argparse
 from pathlib import Path
 import sys
 
-from paperctl.config import ConfigError, RepoResolutionError, init_repo, resolve_repo
+from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
+from paperctl.discovery import DiscoveryError, discover
 
 
 SUCCESS = 0
@@ -46,6 +47,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"created {path}")
         for path in result.replaced:
             print(f"replaced {path}")
+        return SUCCESS
+    if args.command == "discover":
+        try:
+            config = load_config(repo)
+            result = discover(repo, config, args.force)
+        except (ConfigError, DiscoveryError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        print(f"wrote {result.path}")
+        print(f"discovered {result.experiment_count} experiments")
         return SUCCESS
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
