@@ -208,6 +208,24 @@ def test_manifest_symlink_escape_is_rejected_after_discovery(tmp_path):
     assert "questions/q001-throughput/experiments/exp999-escaped" in result.stderr
 
 
+def test_manifest_internal_symlink_experiment_root_is_rejected_after_discovery(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiments = repo / "questions" / "q001-throughput" / "experiments"
+    linked = experiments / "exp998-linked-to-completed"
+    linked.symlink_to("exp001-completed", target_is_directory=True)
+
+    manifest = _discover(repo)
+
+    linked_path = "questions/q001-throughput/experiments/exp998-linked-to-completed"
+    assert any(entry["experiment_path"] == linked_path for entry in manifest["experiments"])
+
+    result = _inventory(repo)
+
+    assert result.returncode == 2
+    assert "manifest experiment path is a symlink" in result.stderr
+    assert linked_path in result.stderr
+
+
 def test_fixed_extension_map_classifies_known_kinds_and_binary_unknowns(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp001-completed"

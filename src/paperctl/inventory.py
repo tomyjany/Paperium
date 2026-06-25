@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema import ValidationError
@@ -127,6 +127,8 @@ def inventory_one(
     manifest_path = manifest_path or _manifest_path(config)
     experiment_path = manifest_entry["experiment_path"]
     experiment_dir = _resolve_manifest_path(repo, experiment_path)
+    if _manifest_path_without_following(repo, experiment_path).is_symlink():
+        raise InventoryError(f"manifest experiment path is a symlink: {experiment_path}")
     if not experiment_dir.is_dir():
         raise InventoryError(f"manifest experiment path is not a directory: {experiment_path}")
 
@@ -365,6 +367,10 @@ def _resolve_manifest_path(repo: Path, path: str) -> Path:
         if "outside repository" in message:
             raise InventoryError(f"manifest path resolves outside repository: {path}") from exc
         raise InventoryError(f"manifest path must be repo-relative POSIX: {path}") from exc
+
+
+def _manifest_path_without_following(repo: Path, path: str) -> Path:
+    return repo / Path(*PurePosixPath(path).parts)
 
 
 def _relevant_config(config: dict[str, Any]) -> dict[str, Any]:
