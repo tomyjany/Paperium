@@ -100,7 +100,55 @@
     "value_type": {
       "enum": ["string", "number", "integer", "boolean", "null"]
     },
-    "source": {
+    "json_pointer_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "source_hash",
+        "selector_type",
+        "selector",
+        "adapter",
+        "adapter_version"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "source_hash": { "$ref": "#/$defs/hash" },
+        "selector_type": { "const": "json_pointer" },
+        "selector": { "type": "string" },
+        "adapter": { "type": "string" },
+        "adapter_version": { "type": "string" }
+      }
+    },
+    "line_range_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "source_hash",
+        "selector_type",
+        "line_start",
+        "line_end",
+        "adapter",
+        "adapter_version"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "source_hash": { "$ref": "#/$defs/hash" },
+        "selector_type": { "const": "line_range" },
+        "line_start": { "type": "integer", "minimum": 1 },
+        "line_end": { "type": "integer", "minimum": 1 },
+        "adapter": { "type": "string" },
+        "adapter_version": { "type": "string" }
+      }
+    },
+    "value_source": {
+      "oneOf": [
+        { "$ref": "#/$defs/json_pointer_source" },
+        { "$ref": "#/$defs/line_range_source" }
+      ]
+    },
+    "record_source": {
       "type": "object",
       "additionalProperties": false,
       "required": ["path"],
@@ -124,7 +172,7 @@
         "value": { "$ref": "#/$defs/scalar" },
         "value_type": { "$ref": "#/$defs/value_type" },
         "unit": { "type": ["string", "null"] },
-        "source": { "$ref": "#/$defs/source" }
+        "source": { "$ref": "#/$defs/value_source" }
       }
     },
     "observed_value": {
@@ -135,7 +183,7 @@
         "value": { "$ref": "#/$defs/scalar" },
         "value_type": { "$ref": "#/$defs/value_type" },
         "unit": { "type": ["string", "null"] },
-        "source": { "$ref": "#/$defs/source" }
+        "source": { "$ref": "#/$defs/value_source" }
       }
     },
     "source_record": {
@@ -143,7 +191,7 @@
       "additionalProperties": true,
       "required": ["source", "message"],
       "properties": {
-        "source": { "$ref": "#/$defs/source" },
+        "source": { "$ref": "#/$defs/record_source" },
         "message": { "type": "string" }
       }
     },
@@ -157,7 +205,7 @@
         "sources": {
           "type": "array",
           "minItems": 2,
-          "items": { "$ref": "#/$defs/source" }
+          "items": { "$ref": "#/$defs/value_source" }
         }
       }
     },

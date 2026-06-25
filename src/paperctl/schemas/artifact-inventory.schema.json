@@ -35,7 +35,7 @@
     "artifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "file_type", "kind", "support_status"],
+      "required": ["path", "file_type", "byte_size", "sha256", "kind", "support_status"],
       "properties": {
         "path": { "$ref": "#/$defs/relative_path" },
         "file_type": { "enum": ["regular", "symlink"] },
@@ -51,7 +51,33 @@
         },
         "support_status": { "enum": ["supported", "unsupported"] },
         "symlink_target": { "type": ["string", "null"] }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "file_type": { "const": "regular" } },
+            "required": ["file_type"]
+          },
+          "then": {
+            "properties": {
+              "byte_size": { "type": "integer", "minimum": 0 },
+              "sha256": { "$ref": "#/$defs/hash" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "file_type": { "const": "symlink" } },
+            "required": ["file_type"]
+          },
+          "then": {
+            "properties": {
+              "byte_size": { "type": "null" },
+              "sha256": { "type": "null" }
+            }
+          }
+        }
+      ]
     }
   }
 }

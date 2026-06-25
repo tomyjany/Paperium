@@ -2,7 +2,51 @@ import re
 
 import pytest
 import yaml
-from jsonschema import ValidationError
+from jsonschema import Draft202012Validator, ValidationError
+
+
+def _evidence_packet(**overrides):
+    packet = {
+        "schema_version": 1,
+        "artifact_type": "evidence_packet",
+        "question_path": "questions/q001-throughput",
+        "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
+        "preanalysis_disposition": "blocked",
+        "execution_status": "unknown",
+        "evidence_status": "missing",
+        "reason_codes": ["no_usable_evidence"],
+        "counts": {
+            "canonical_fact_count": 0,
+            "observed_value_count": 0,
+            "preview_count": 0,
+            "diagnostic_count": 0,
+            "conflict_count": 0,
+            "unsupported_artifact_count": 0,
+            "warning_count": 0,
+        },
+        "canonical_facts": [],
+        "observed_values": [],
+        "previews": [],
+        "diagnostics": [],
+        "conflicts": [],
+        "unsupported_artifacts": [],
+        "warnings": [],
+    }
+    packet.update(overrides)
+    return packet
+
+
+def _strict_json_source(**overrides):
+    source = {
+        "path": "questions/q001-throughput/experiments/exp001-baseline/outputs/result.json",
+        "source_hash": "sha256:" + "b" * 64,
+        "selector_type": "json_pointer",
+        "selector": "/metrics/pages_per_second",
+        "adapter": "json",
+        "adapter_version": "1",
+    }
+    source.update(overrides)
+    return source
 
 
 def test_packaged_schemas_load_through_importlib_resources():
@@ -27,6 +71,21 @@ def test_packaged_schemas_load_through_importlib_resources():
     }
 
     assert expected_names <= available_names
+
+
+def test_packaged_schemas_are_valid_json_schemas():
+    from paperctl._support.schema import load_schema
+
+    for name in [
+        "paper-config.schema.json",
+        "manifest.schema.json",
+        "artifact-inventory.schema.json",
+        "evidence-packet.schema.json",
+        "render-state.schema.json",
+        "paper-audit.schema.json",
+        "experiment-report.schema.json",
+    ]:
+        Draft202012Validator.check_schema(load_schema(name))
 
 
 def test_manifest_schema_excludes_status_and_disposition_fields():
@@ -59,38 +118,89 @@ def test_manifest_schema_excludes_status_and_disposition_fields():
 def test_evidence_packet_schema_has_closed_reason_codes_and_status_fields():
     from paperctl._support.schema import validate_artifact
 
-    packet = {
-        "schema_version": 1,
-        "artifact_type": "evidence_packet",
-        "question_path": "questions/q001-throughput",
-        "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
-        "preanalysis_disposition": "blocked",
-        "execution_status": "unknown",
-        "evidence_status": "missing",
-        "reason_codes": ["no_usable_evidence"],
-        "counts": {
-            "canonical_fact_count": 0,
-            "observed_value_count": 0,
-            "preview_count": 0,
-            "diagnostic_count": 0,
-            "conflict_count": 0,
-            "unsupported_artifact_count": 0,
-            "warning_count": 0,
-        },
-        "canonical_facts": [],
-        "observed_values": [],
-        "previews": [],
-        "diagnostics": [],
-        "conflicts": [],
-        "unsupported_artifacts": [],
-        "warnings": [],
-    }
+    packet = _evidence_packet()
 
     validate_artifact("evidence-packet.schema.json", packet)
 
     packet["reason_codes"] = ["made_up_reason"]
     with pytest.raises(ValidationError):
         validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_evidence_canonical_facts_require_full_selector_provenance():
+    from paperctl._support.schema import validate_artifact
+
+    packet = _evidence_packet(
+        canonical_facts=[
+            {
+                "fact_id": "measured_throughput",
+                "value": 13.585,
+                "value_type": "number",
+                "unit": "pages_per_second",
+                "source": _strict_json_source(),
+            }
+        ]
+    )
+    validate_artifact("evidence-packet.schema.json", packet)
+
+    packet["canonical_facts"][0]["source"] = {
+        "path": "questions/q001-throughput/experiments/exp001-baseline/outputs/result.json"
+    }
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_evidence_observed_values_require_full_selector_provenance():
+    from paperctl._support.schema import validate_artifact
+
+    packet = _evidence_packet(
+        observed_values=[
+            {
+                "value": 13.585,
+                "value_type": "number",
+                "unit": "pages_per_second",
+                "source": _strict_json_source(),
+            }
+        ]
+    )
+    validate_artifact("evidence-packet.schema.json", packet)
+
+    packet["observed_values"][0]["source"] = {
+        "path": "questions/q001-throughput/experiments/exp001-baseline/outputs/result.json"
+    }
+    with pytest.raises(ValidationError):
+        validate_artifact("evidence-packet.schema.json", packet)
+
+
+def test_inventory_regular_files_require_byte_size_and_sha256():
+    from paperctl._support.schema import validate_artifact
+
+    inventory = {
+        "schema_version": 1,
+        "artifact_type": "artifact_inventory",
+        "question_path": "questions/q001-throughput",
+        "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
+        "artifacts": [
+            {
+                "path": "questions/q001-throughput/experiments/exp001-baseline/outputs/result.json",
+                "file_type": "regular",
+                "byte_size": 123,
+                "sha256": "sha256:" + "c" * 64,
+                "kind": "json",
+                "support_status": "supported",
+            }
+        ],
+    }
+    validate_artifact("artifact-inventory.schema.json", inventory)
+
+    del inventory["artifacts"][0]["byte_size"]
+    with pytest.raises(ValidationError):
+        validate_artifact("artifact-inventory.schema.json", inventory)
+
+    inventory["artifacts"][0]["byte_size"] = 123
+    del inventory["artifacts"][0]["sha256"]
+    with pytest.raises(ValidationError):
+        validate_artifact("artifact-inventory.schema.json", inventory)
 
 
 def test_experiment_report_schema_is_a_source_contract_without_artifact_type():
@@ -131,6 +241,15 @@ def test_dump_json_bytes_rejects_non_finite_numbers():
 
     with pytest.raises(ValueError):
         dump_json_bytes({"value": float("inf")})
+
+
+def test_write_json_atomic_uses_deterministic_encoding(tmp_path):
+    from paperctl._support.jsonio import write_json_atomic
+
+    path = tmp_path / "nested" / "data.json"
+    write_json_atomic(path, {"z": 1, "a": 2})
+
+    assert path.read_bytes() == b'{"a":2,"z":1}\n'
 
 
 def test_sha256_helpers_use_lowercase_prefixed_hex(tmp_path):
