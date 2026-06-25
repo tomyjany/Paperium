@@ -44,7 +44,7 @@ def build(repo: Path, config: dict[str, Any], force: bool = False) -> BuildResul
         )
         normalize_result = normalize_all(repo=repo, config=config, force=force)
         render_result = render(repo=repo, config=config, force=force)
-    except (DiscoveryError, InventoryError, NormalizeError, RenderError) as exc:
+    except (DiscoveryError, InventoryError, NormalizeError, RenderError, BuildError) as exc:
         try:
             _write_failed_rebuild_audit(repo, config, str(exc), force=force)
         except AuditError as audit_exc:

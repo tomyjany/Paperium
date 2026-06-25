@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
@@ -218,6 +219,49 @@ def test_failed_rebuild_replaces_stale_success_audit_with_deterministic_failure(
     ]
     assert (
         "canonical selector did not resolve"
+        in report["deterministic_health"]["issues"][0]["message"]
+    )
+
+
+def test_forced_unchanged_discovery_rewrite_failure_replaces_stale_success_audit(
+    monkeypatch,
+    tmp_path,
+):
+    from paperctl import build as build_module
+
+    repo = copy_fixture_repo(tmp_path)
+    first = run_paperctl(repo, "build")
+    assert first.returncode == 0, first.stderr
+    stale_success_report = read_json(repo / AUDIT_PATH)
+    assert stale_success_report["deterministic_health"]["status"] == "passed"
+
+    def fail_force_discovery_write(repo_arg, result):
+        assert repo_arg == repo.resolve()
+        assert result.status == "unchanged"
+        raise build_module.BuildError(
+            "could not write manifest: paper/work/manifest.json: permission denied"
+        )
+
+    monkeypatch.setattr(
+        build_module,
+        "_force_discovery_write",
+        fail_force_discovery_write,
+    )
+
+    with pytest.raises(build_module.BuildError) as excinfo:
+        build_module.build(repo, load_config(repo), force=True)
+
+    assert "could not write manifest: paper/work/manifest.json" in str(excinfo.value)
+    report = read_json(repo / AUDIT_PATH)
+    validate_artifact("paper-audit.schema.json", report)
+    assert report["deterministic_health"]["status"] == "failed"
+    assert report["publication_gate"]["status"] == "passed"
+    assert report["publishable"] is False
+    assert [issue["code"] for issue in report["deterministic_health"]["issues"]] == [
+        "build_stage_failed"
+    ]
+    assert (
+        "could not write manifest: paper/work/manifest.json"
         in report["deterministic_health"]["issues"][0]["message"]
     )
 
