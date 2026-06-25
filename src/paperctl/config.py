@@ -98,6 +98,8 @@ def load_config(repo: Path) -> dict[str, Any]:
         text = config_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise ConfigError(f"missing config file: {CONFIG_NAME}") from exc
+    except OSError as exc:
+        raise ConfigError(f"could not read config file: {CONFIG_NAME}: {exc}") from exc
 
     try:
         loaded = yaml.safe_load(text)

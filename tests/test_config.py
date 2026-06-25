@@ -27,6 +27,17 @@ def test_safe_yaml_parsing_rejects_custom_tags(tmp_path):
         load_config(repo)
 
 
+def test_load_config_rejects_directory_paper_yaml_as_config_error(tmp_path):
+    from paperctl.config import ConfigError, load_config
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "paper.yaml").mkdir()
+
+    with pytest.raises(ConfigError, match="could not read config file"):
+        load_config(repo)
+
+
 def test_unknown_config_keys_fail_validation(tmp_path):
     from paperctl.config import ConfigError, default_config, validate_config
 
