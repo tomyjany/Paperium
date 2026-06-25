@@ -255,6 +255,24 @@ def test_init_rejects_unsafe_runtime_directory_without_partial_config(tmp_path):
     assert not (repo / "paper.yaml").exists()
 
 
+def test_init_wraps_paper_yaml_write_failure(tmp_path, monkeypatch):
+    import paperctl.config as config_module
+    from paperctl.config import ConfigError, init_repo
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fail_write(path, text):
+        raise OSError("no write")
+
+    monkeypatch.setattr(config_module, "write_text_atomic", fail_write)
+
+    with pytest.raises(ConfigError, match="could not write config file: paper.yaml: no write"):
+        init_repo(repo, force=False)
+
+    assert not (repo / "paper.yaml").exists()
+
+
 def test_init_force_rejects_directory_obstructing_paper_yaml(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

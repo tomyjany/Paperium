@@ -155,7 +155,10 @@ def init_repo(repo: Path, force: bool) -> InitResult:
         replaced.append(CONFIG_NAME)
     else:
         created.append(CONFIG_NAME)
-    write_text_atomic(config_path, _dump_config(config))
+    try:
+        write_text_atomic(config_path, _dump_config(config))
+    except OSError as exc:
+        raise ConfigError(f"could not write config file: {CONFIG_NAME}: {exc}") from exc
 
     return InitResult(created=created, replaced=replaced)
 
