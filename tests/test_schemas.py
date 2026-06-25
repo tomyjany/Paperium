@@ -425,6 +425,26 @@ def test_json_pointer_selectors_must_be_empty_or_start_with_slash():
         )
 
 
+def test_paper_config_canonical_fact_keys_must_be_relative_experiment_paths():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("paper-config.schema.json", _paper_config())
+
+    for invalid_key in [
+        "/absolute/experiment",
+        "../escape",
+        "questions/q001/../escape",
+    ]:
+        config = _paper_config()
+        mappings = config["evidence"]["canonical_facts"]
+        mappings[invalid_key] = mappings.pop(
+            "questions/q001-throughput/experiments/exp001-baseline"
+        )
+
+        with pytest.raises(ValidationError):
+            validate_artifact("paper-config.schema.json", config)
+
+
 def test_dump_json_bytes_sorts_keys_and_ends_with_newline():
     from paperctl._support.jsonio import dump_json_bytes
 

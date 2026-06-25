@@ -39,6 +39,7 @@
         },
         "canonical_facts": {
           "type": "object",
+          "propertyNames": { "$ref": "#/$defs/relative_path" },
           "additionalProperties": {
             "type": "array",
             "items": { "$ref": "#/$defs/canonical_fact_mapping" }
