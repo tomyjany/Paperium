@@ -45,16 +45,17 @@ class RenderResult:
     blocker_count: int
 
 
+@dataclass(frozen=True)
+class _RenderOutputPaths:
+    draft_path: str
+    state_path: str
+    draft_output: Path
+    state_output: Path
+
+
 def render(repo: Path, config: dict[str, Any], force: bool = False) -> RenderResult:
     repo = repo.resolve()
-    draft_path = config["paper"]["draft_output"]
-    final_path = config["paper"]["final_output"]
-    if _is_repo_root_paper_path(draft_path):
-        raise RenderError("Milestone 1 render never writes repository-root PAPER.md")
-    draft_output = _resolve_output_path(repo, draft_path, label="draft")
-    final_output = _resolve_output_path(repo, final_path, label="final")
-    if draft_output == final_output:
-        raise RenderError("paper.draft_output must not target protected paper.final_output")
+    output_paths = _resolve_render_output_paths(repo, config)
 
     try:
         manifest = load_manifest(repo, config)
@@ -72,20 +73,18 @@ def render(repo: Path, config: dict[str, Any], force: bool = False) -> RenderRes
     except ValidationError as exc:
         raise RenderError(f"invalid generated render state: {exc.message}") from exc
 
-    state_relative = _render_state_path(config)
-    state_output = _resolve_output_path(repo, state_relative, label="render state")
     status = _write_outputs(
-        draft_output=draft_output,
-        draft_path=draft_path,
+        draft_output=output_paths.draft_output,
+        draft_path=output_paths.draft_path,
         draft_bytes=draft_bytes,
-        state_output=state_output,
-        state_path=state_relative,
+        state_output=output_paths.state_output,
+        state_path=output_paths.state_path,
         render_state=render_state,
         force=force,
     )
     return RenderResult(
-        draft_path=draft_path,
-        render_state_path=state_relative,
+        draft_path=output_paths.draft_path,
+        render_state_path=output_paths.state_path,
         status=status,
         experiment_count=len(manifest["experiments"]),
         blocker_count=len(blockers),
@@ -512,6 +511,46 @@ def _read_existing_output(path: Path, display_path: str, *, label: str) -> bytes
         return path.read_bytes()
     except OSError as exc:
         raise RenderError(f"could not read existing {label} output {display_path}: {exc}") from exc
+
+
+def _resolve_render_output_paths(repo: Path, config: dict[str, Any]) -> _RenderOutputPaths:
+    draft_path = config["paper"]["draft_output"]
+    final_path = config["paper"]["final_output"]
+    state_path = _render_state_path(config)
+    if _is_repo_root_paper_path(draft_path):
+        raise RenderError("Milestone 1 render never writes repository-root PAPER.md")
+
+    draft_output = _resolve_output_path(repo, draft_path, label="draft")
+    final_output = _resolve_output_path(repo, final_path, label="final")
+    state_output = _resolve_output_path(repo, state_path, label="render state")
+    _reject_render_output_collisions(
+        draft_output=draft_output,
+        final_output=final_output,
+        state_output=state_output,
+    )
+    _reject_existing_output_directory(draft_output, draft_path, label="draft")
+    _reject_existing_output_directory(final_output, final_path, label="final")
+    _reject_existing_output_directory(state_output, state_path, label="render state")
+    return _RenderOutputPaths(
+        draft_path=draft_path,
+        state_path=state_path,
+        draft_output=draft_output,
+        state_output=state_output,
+    )
+
+
+def _reject_render_output_collisions(
+    *,
+    draft_output: Path,
+    final_output: Path,
+    state_output: Path,
+) -> None:
+    if draft_output == final_output:
+        raise RenderError("paper.draft_output must not target protected paper.final_output")
+    if draft_output == state_output:
+        raise RenderError("paper.draft_output must not target render state output")
+    if state_output == final_output:
+        raise RenderError("render state output must not target protected paper.final_output")
 
 
 def _resolve_output_path(repo: Path, path: str, *, label: str) -> Path:

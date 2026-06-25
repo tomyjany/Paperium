@@ -139,6 +139,45 @@ def test_render_rejects_equivalent_draft_and_final_output_paths(tmp_path):
     assert not (repo / "paper" / "work" / "render-state.json").exists()
 
 
+def test_render_rejects_draft_output_that_collides_with_render_state_before_prerequisites(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["paper"]["draft_output"] = "paper/work/render-state.json"
+    config["paper"]["final_output"] = "paper/future-final.md"
+    _write_config(repo, config)
+    sentinel_path = repo / RENDER_STATE_PATH
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    sentinel_path.write_text("protected render-state sentinel\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "paper.draft_output must not target render state output" in result.stderr
+    assert sentinel_path.read_text(encoding="utf-8") == "protected render-state sentinel\n"
+    assert "missing discovery manifest" not in result.stderr
+
+
+def test_render_rejects_render_state_that_collides_with_final_output_without_touching_sentinel(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["paper"]["final_output"] = "paper/work/render-state.json"
+    _write_config(repo, config)
+    _run_prerequisites(repo)
+    sentinel_path = repo / RENDER_STATE_PATH
+    sentinel_path.write_text("protected future final sentinel\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "render state output must not target protected paper.final_output" in result.stderr
+    assert sentinel_path.read_text(encoding="utf-8") == "protected future final sentinel\n"
+    assert not (repo / DRAFT_PATH).exists()
+
+
 def test_render_writes_bounded_preanalysis_draft_and_state_without_touching_final_paper(
     tmp_path,
 ):
@@ -265,6 +304,23 @@ def test_render_rejects_existing_draft_output_directory_without_traceback(tmp_pa
     assert (repo / DRAFT_PATH).is_dir()
 
 
+def test_render_rejects_draft_output_that_is_existing_work_directory_without_traceback(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config = _load_config(repo)
+    config["paper"]["draft_output"] = "paper/work"
+    config["paper"]["final_output"] = "paper/future-final.md"
+    _write_config(repo, config)
+    _run_prerequisites(repo)
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert "draft output path is a directory: paper/work" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert (repo / "paper" / "work").is_dir()
+    assert not (repo / RENDER_STATE_PATH).exists()
+
+
 def test_render_rejects_existing_render_state_output_directory_without_traceback(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     _run_prerequisites(repo)
@@ -279,6 +335,26 @@ def test_render_rejects_existing_render_state_output_directory_without_traceback
     assert "render state output path is a directory: paper/work/render-state.json" in result.stderr
     assert "Traceback" not in result.stderr
     assert (repo / RENDER_STATE_PATH).is_dir()
+
+
+def test_render_rejects_symlinked_draft_output_directory_component(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (repo / "linked-output").symlink_to(outside, target_is_directory=True)
+    config = _load_config(repo)
+    config["paper"]["draft_output"] = "linked-output/PAPER.draft.md"
+    config["paper"]["final_output"] = "paper/future-final.md"
+    _write_config(repo, config)
+
+    result = run_paperctl(repo, "render")
+
+    assert result.returncode == 2
+    assert (
+        "configured path resolves outside repository: "
+        "paper.draft_output='linked-output/PAPER.draft.md'"
+    ) in result.stderr
+    assert not (outside / "PAPER.draft.md").exists()
 
 
 def test_render_escapes_untrusted_markdown_syntax_in_tables(tmp_path):
