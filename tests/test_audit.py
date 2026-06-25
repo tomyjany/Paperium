@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -104,6 +105,29 @@ def test_audit_python_api_returns_result_and_uses_derived_publishable(tmp_path):
     assert result.publication_status == "blocked"
     assert result.publishable is False
     assert result.blocker_count > 0
+
+
+def test_unchanged_audit_reuses_report_and_force_rewrites_byte_identical_report(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_pipeline(repo)
+    first = run_paperctl(repo, "audit", "--stage", "deterministic")
+    assert first.returncode == 0, first.stderr
+    first_bytes = (repo / AUDIT_PATH).read_bytes()
+    sentinel_ns = 1_700_000_000_000_000_000
+    os.utime(repo / AUDIT_PATH, ns=(sentinel_ns, sentinel_ns))
+    first_mtime = (repo / AUDIT_PATH).stat().st_mtime_ns
+
+    second = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert second.returncode == 0, second.stderr
+    assert (repo / AUDIT_PATH).read_bytes() == first_bytes
+    assert (repo / AUDIT_PATH).stat().st_mtime_ns == first_mtime
+
+    forced = run_paperctl(repo, "audit", "--stage", "deterministic", "--force")
+
+    assert forced.returncode == 0, forced.stderr
+    assert (repo / AUDIT_PATH).read_bytes() == first_bytes
+    assert (repo / AUDIT_PATH).stat().st_mtime_ns != first_mtime
 
 
 def test_publication_blocker_derivation_is_deduplicated_and_sorted_by_precedence():

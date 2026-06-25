@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             config = load_config(repo)
             stage = args.stage or config["audit"]["default_stage"]
-            result = audit(repo, config, stage)
+            result = audit(repo, config, stage, force=args.force)
         except (ConfigError, AuditError) as exc:
             print(f"{parser.prog}: {exc}", file=sys.stderr)
             return DETERMINISTIC_FAILURE

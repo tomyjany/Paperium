@@ -44,7 +44,12 @@ class AuditResult:
     blocker_codes: list[str]
 
 
-def audit(repo: Path, config: dict[str, Any], stage: str | None = None) -> AuditResult:
+def audit(
+    repo: Path,
+    config: dict[str, Any],
+    stage: str | None = None,
+    force: bool = False,
+) -> AuditResult:
     repo = repo.resolve()
     requested_stage = stage or config["audit"]["default_stage"]
     if requested_stage not in {"deterministic", "publication"}:
@@ -63,7 +68,7 @@ def audit(repo: Path, config: dict[str, Any], stage: str | None = None) -> Audit
     context = _AuditContext(repo=repo, config=config)
     context.run()
     report = context.report(requested_stage)
-    _write_report(config, report, report_output)
+    _write_report(config, report, report_output, force=force)
     return AuditResult(
         report_path=config["paper"]["audit_report"],
         stage=requested_stage,
@@ -489,8 +494,21 @@ class _AuditContext:
         self.issues.append(issue)
 
 
-def _write_report(config: dict[str, Any], report: dict[str, Any], output_path: Path) -> None:
+def _write_report(
+    config: dict[str, Any],
+    report: dict[str, Any],
+    output_path: Path,
+    *,
+    force: bool,
+) -> None:
     report_path = config["paper"]["audit_report"]
+    new_bytes = dump_json_bytes(report)
+    if output_path.exists() and not force:
+        try:
+            if output_path.read_bytes() == new_bytes:
+                return
+        except OSError as exc:
+            raise AuditError(f"could not read existing audit report: {report_path}: {exc}") from exc
     try:
         write_json_atomic(output_path, report)
     except OSError as exc:

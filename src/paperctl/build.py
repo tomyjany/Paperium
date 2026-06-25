@@ -44,7 +44,7 @@ def build(repo: Path, config: dict[str, Any], force: bool = False) -> BuildResul
         )
         normalize_result = normalize_all(repo=repo, config=config, force=force)
         render_result = render(repo=repo, config=config, force=force)
-        audit_result = audit(repo=repo, config=config, stage="deterministic")
+        audit_result = audit(repo=repo, config=config, stage="deterministic", force=force)
     except (AuditError, DiscoveryError, InventoryError, NormalizeError, RenderError) as exc:
         raise BuildError(str(exc)) from exc
 

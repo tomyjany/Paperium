@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -127,6 +128,7 @@ def test_build_runs_direct_python_stage_apis_in_order(monkeypatch, tmp_path):
     def fake_audit(*args, **kwargs):
         calls.append("audit")
         assert kwargs["stage"] == "deterministic"
+        assert kwargs["force"] is False
         return StubAudit()
 
     def fail_subprocess_run(*args, **kwargs):
@@ -193,6 +195,10 @@ def test_second_unchanged_build_reuses_outputs_and_force_is_byte_identical(tmp_p
     assert first.returncode == 0, first.stderr
     manifest = read_json(repo / MANIFEST_PATH)
     first_hashes = _generated_hashes(repo, manifest)
+    first_audit_bytes = (repo / AUDIT_PATH).read_bytes()
+    sentinel_ns = 1_700_000_000_000_000_000
+    os.utime(repo / AUDIT_PATH, ns=(sentinel_ns, sentinel_ns))
+    first_audit_mtime = (repo / AUDIT_PATH).stat().st_mtime_ns
 
     second = run_paperctl(repo, "build")
 
@@ -202,6 +208,7 @@ def test_second_unchanged_build_reuses_outputs_and_force_is_byte_identical(tmp_p
     assert "evidence: 0 created, 0 replaced" in second.stdout
     assert "render: unchanged" in second.stdout
     assert _generated_hashes(repo, manifest) == first_hashes
+    assert (repo / AUDIT_PATH).stat().st_mtime_ns == first_audit_mtime
 
     forced = run_paperctl(repo, "build", "--force")
 
@@ -210,6 +217,8 @@ def test_second_unchanged_build_reuses_outputs_and_force_is_byte_identical(tmp_p
     assert "evidence: 0 created, 6 replaced, 0 unchanged" in forced.stdout
     assert "render: wrote" in forced.stdout
     assert _generated_hashes(repo, manifest) == first_hashes
+    assert (repo / AUDIT_PATH).read_bytes() == first_audit_bytes
+    assert (repo / AUDIT_PATH).stat().st_mtime_ns != first_audit_mtime
 
 
 def test_changing_one_experiment_regenerates_only_that_inventory_and_evidence_plus_downstream(
