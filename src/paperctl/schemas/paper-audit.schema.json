@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperctl.local/schemas/paper-audit.schema.json",
+  "title": "paperctl audit report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_type", "stage", "deterministic_health", "publication_ready", "blockers"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_type": { "const": "paper_audit" },
+    "stage": { "enum": ["deterministic", "publication"] },
+    "deterministic_health": { "enum": ["pass", "fail"] },
+    "publication_ready": { "type": "boolean" },
+    "fingerprint": { "type": "object" },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blocker" }
+    }
+  },
+  "$defs": {
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "question_path": {
+          "anyOf": [
+            { "$ref": "#/$defs/relative_path" },
+            { "type": "null" }
+          ]
+        },
+        "experiment_path": {
+          "anyOf": [
+            { "$ref": "#/$defs/relative_path" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

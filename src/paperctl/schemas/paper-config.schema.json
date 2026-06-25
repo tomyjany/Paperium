@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperctl.local/schemas/paper-config.schema.json",
+  "title": "paperctl configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "questions", "paper", "evidence", "audit"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "questions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "pattern", "experiments_directory"],
+      "properties": {
+        "root": { "$ref": "#/$defs/relative_path" },
+        "pattern": { "type": "string", "minLength": 1 },
+        "experiments_directory": { "$ref": "#/$defs/relative_path" }
+      }
+    },
+    "paper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["work_directory", "draft_output", "final_output", "audit_report"],
+      "properties": {
+        "work_directory": { "$ref": "#/$defs/relative_path" },
+        "draft_output": { "$ref": "#/$defs/relative_path" },
+        "final_output": { "$ref": "#/$defs/relative_path" },
+        "audit_report": { "$ref": "#/$defs/relative_path" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_canonical_artifacts", "canonical_facts", "extraction_limits"],
+      "properties": {
+        "default_canonical_artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relative_path" }
+        },
+        "canonical_facts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/canonical_fact_mapping" }
+          }
+        },
+        "extraction_limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maximum_file_bytes",
+            "maximum_scalar_observations_per_file",
+            "maximum_nesting_depth",
+            "preview_rows",
+            "log_head_lines",
+            "log_tail_lines"
+          ],
+          "properties": {
+            "maximum_file_bytes": { "type": "integer", "minimum": 1 },
+            "maximum_scalar_observations_per_file": { "type": "integer", "minimum": 0 },
+            "maximum_nesting_depth": { "type": "integer", "minimum": 1 },
+            "preview_rows": { "type": "integer", "minimum": 0 },
+            "log_head_lines": { "type": "integer", "minimum": 0 },
+            "log_tail_lines": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_stage"],
+      "properties": {
+        "default_stage": { "enum": ["deterministic", "publication"] }
+      }
+    }
+  },
+  "$defs": {
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "canonical_fact_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact_id", "source", "selector_type", "selector", "expected_type"],
+      "properties": {
+        "fact_id": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/relative_path" },
+        "selector_type": { "const": "json_pointer" },
+        "selector": { "type": "string" },
+        "expected_type": {
+          "enum": ["string", "number", "integer", "boolean", "null", "object", "array"]
+        },
+        "unit": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

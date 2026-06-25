@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperctl.local/schemas/artifact-inventory.schema.json",
+  "title": "paperctl artifact inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "question_path",
+    "experiment_path",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_type": { "const": "artifact_inventory" },
+    "question_path": { "$ref": "#/$defs/relative_path" },
+    "experiment_path": { "$ref": "#/$defs/relative_path" },
+    "fingerprint": { "type": "object" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "file_type", "kind", "support_status"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "file_type": { "enum": ["regular", "symlink"] },
+        "byte_size": { "type": ["integer", "null"], "minimum": 0 },
+        "sha256": {
+          "anyOf": [
+            { "$ref": "#/$defs/hash" },
+            { "type": "null" }
+          ]
+        },
+        "kind": {
+          "enum": ["json", "yaml", "csv", "jsonl", "markdown", "log", "text", "binary", "unknown"]
+        },
+        "support_status": { "enum": ["supported", "unsupported"] },
+        "symlink_target": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

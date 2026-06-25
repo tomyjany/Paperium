@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperctl.local/schemas/manifest.schema.json",
+  "title": "paperctl discovery manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_type", "experiments"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_type": { "const": "manifest" },
+    "fingerprint": { "type": "object" },
+    "experiments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/experiment" }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "nullable_relative_path": {
+      "anyOf": [
+        { "$ref": "#/$defs/relative_path" },
+        { "type": "null" }
+      ]
+    },
+    "nullable_hash": {
+      "anyOf": [
+        { "$ref": "#/$defs/hash" },
+        { "type": "null" }
+      ]
+    },
+    "experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question_ref",
+        "question_path",
+        "question_readme_path",
+        "question_readme_sha256",
+        "experiment_ref",
+        "experiment_path",
+        "inventory_path",
+        "evidence_path"
+      ],
+      "properties": {
+        "question_ref": { "type": "string", "minLength": 1 },
+        "question_path": { "$ref": "#/$defs/relative_path" },
+        "question_readme_path": { "$ref": "#/$defs/nullable_relative_path" },
+        "question_readme_sha256": { "$ref": "#/$defs/nullable_hash" },
+        "experiment_ref": { "type": "string", "minLength": 1 },
+        "experiment_path": { "$ref": "#/$defs/relative_path" },
+        "inventory_path": { "$ref": "#/$defs/relative_path" },
+        "evidence_path": { "$ref": "#/$defs/relative_path" }
+      }
+    }
+  }
+}

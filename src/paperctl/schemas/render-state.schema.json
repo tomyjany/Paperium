@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperctl.local/schemas/render-state.schema.json",
+  "title": "paperctl render state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_type", "draft_output"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_type": { "const": "render_state" },
+    "draft_output": { "$ref": "#/$defs/relative_path" },
+    "fingerprint": { "type": "object" },
+    "manifest_sha256": { "$ref": "#/$defs/hash" },
+    "evidence_packet_sha256": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/hash" }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    }
+  }
+}
