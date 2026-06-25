@@ -14,7 +14,12 @@ from paperctl._support.paths import is_repo_relative_posix, resolve_repo_relativ
 from paperctl._support.schema import validate_artifact
 from paperctl.discovery import _build_manifest
 from paperctl.inventory import InventoryError, _manifest_path, load_manifest
-from paperctl.normalize import NormalizeError, _build_packet, _expected_inventory, _load_fresh_inventory
+from paperctl.normalize import (
+    NormalizeError,
+    _build_packet,
+    _expected_inventory,
+    _load_fresh_inventory,
+)
 from paperctl.rendering import _build_render_state, _render_state_path, render_draft_bytes
 
 
@@ -54,6 +59,7 @@ def audit(repo: Path, config: dict[str, Any], stage: str | None = None) -> Audit
             manifest_for_output_protection,
             report_output,
         )
+    _reject_work_directory_artifact_collisions(config)
     context = _AuditContext(repo=repo, config=config)
     context.run()
     report = context.report(requested_stage)
@@ -423,9 +429,7 @@ class _AuditContext:
             "manifest_path": manifest_path,
             "expected_manifest_sha256": sha256_bytes(dump_json_bytes(expected)),
             "expected_config_sha256": expected_fingerprint["config_sha256"],
-            "expected_directory_entries_sha256": expected_fingerprint[
-                "directory_entries_sha256"
-            ],
+            "expected_directory_entries_sha256": expected_fingerprint["directory_entries_sha256"],
         }
 
     def _record_stale_source_input(self, entry: dict[str, Any], manifest_path: str) -> None:
@@ -477,7 +481,7 @@ class _AuditContext:
         issue = {
             "severity": "error",
             "code": code,
-            "message": message,
+            "message": _sanitize_repo_absolute_paths(self.repo, message),
             "path": path,
             "question_path": entry["question_path"] if entry else None,
             "experiment_path": entry["experiment_path"] if entry else None,
@@ -600,6 +604,34 @@ def _reject_manifest_artifact_collisions(
     )
 
 
+def _reject_work_directory_artifact_collisions(config: dict[str, Any]) -> None:
+    report_relative = _normalized_repo_relative_path(
+        config["paper"]["audit_report"],
+        label="paper.audit_report",
+    )
+    work_directory = _normalized_repo_relative_path(
+        config["paper"]["work_directory"],
+        label="paper.work_directory",
+    )
+    protected_directories = [
+        (
+            (PurePosixPath(work_directory) / "inventories").as_posix(),
+            "paper.audit_report must not target generated inventory outputs",
+        ),
+        (
+            (PurePosixPath(work_directory) / "evidence").as_posix(),
+            "paper.audit_report must not target generated evidence outputs",
+        ),
+    ]
+    for protected_directory, message in protected_directories:
+        if _is_same_or_child_posix_path(report_relative, protected_directory):
+            raise AuditError(message)
+
+
+def _is_same_or_child_posix_path(path: str, directory: str) -> bool:
+    return path == directory or path.startswith(f"{directory}/")
+
+
 def _normalized_repo_relative_path(path: str, *, label: str) -> str:
     if not is_repo_relative_posix(path):
         raise AuditError(f"{label} path must be repo-relative POSIX: {path}")
@@ -676,6 +708,16 @@ def _hash_if_file(path: Path) -> str | None:
         return sha256_file(path)
     except OSError:
         return None
+
+
+def _sanitize_repo_absolute_paths(repo: Path, message: str) -> str:
+    repo_path = repo.resolve()
+    prefixes = sorted({repo_path.as_posix(), str(repo_path)}, key=len, reverse=True)
+    sanitized = message
+    for prefix in prefixes:
+        sanitized = sanitized.replace(f"{prefix}/", "")
+        sanitized = sanitized.replace(prefix, ".")
+    return sanitized
 
 
 def _relevant_config(config: dict[str, Any]) -> dict[str, Any]:

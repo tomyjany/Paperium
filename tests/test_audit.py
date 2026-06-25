@@ -330,12 +330,14 @@ def test_audit_fingerprint_changes_when_failure_payload_changes_with_same_counts
 
     assert malformed_result.returncode == 2
     malformed_report = read_json(repo / AUDIT_PATH)
-    assert malformed_report["fingerprint"]["input_counts"] == missing_report["fingerprint"][
-        "input_counts"
-    ]
-    assert malformed_report["fingerprint"]["issue_payload_sha256"] != missing_report[
-        "fingerprint"
-    ]["issue_payload_sha256"]
+    assert (
+        malformed_report["fingerprint"]["input_counts"]
+        == missing_report["fingerprint"]["input_counts"]
+    )
+    assert (
+        malformed_report["fingerprint"]["issue_payload_sha256"]
+        != missing_report["fingerprint"]["issue_payload_sha256"]
+    )
     assert malformed_report["fingerprint"]["fingerprint_sha256"] != missing_fingerprint
 
 
@@ -362,15 +364,17 @@ def test_audit_fingerprint_changes_when_malformed_failed_file_contents_change(tm
 
     assert second_result.returncode == 2
     second_report = read_json(repo / AUDIT_PATH)
-    assert second_report["fingerprint"]["input_counts"] == first_report["fingerprint"][
-        "input_counts"
-    ]
-    assert second_report["fingerprint"]["issue_payload_sha256"] == first_report["fingerprint"][
-        "issue_payload_sha256"
-    ]
-    assert second_report["fingerprint"]["failed_prerequisite_sha256"] != first_report[
-        "fingerprint"
-    ]["failed_prerequisite_sha256"]
+    assert (
+        second_report["fingerprint"]["input_counts"] == first_report["fingerprint"]["input_counts"]
+    )
+    assert (
+        second_report["fingerprint"]["issue_payload_sha256"]
+        == first_report["fingerprint"]["issue_payload_sha256"]
+    )
+    assert (
+        second_report["fingerprint"]["failed_prerequisite_sha256"]
+        != first_report["fingerprint"]["failed_prerequisite_sha256"]
+    )
     assert second_report["fingerprint"]["fingerprint_sha256"] != first_fingerprint
 
 
@@ -431,15 +435,17 @@ def test_audit_fingerprint_changes_when_stale_inventory_source_contents_change(t
 }
 """
     )
-    assert second_report["fingerprint"]["input_counts"] == first_report["fingerprint"][
-        "input_counts"
-    ]
-    assert second_report["fingerprint"]["issue_payload_sha256"] == first_report[
-        "fingerprint"
-    ]["issue_payload_sha256"]
-    assert second_report["fingerprint"]["fingerprint_sha256"] != first_report["fingerprint"][
-        "fingerprint_sha256"
-    ]
+    assert (
+        second_report["fingerprint"]["input_counts"] == first_report["fingerprint"]["input_counts"]
+    )
+    assert (
+        second_report["fingerprint"]["issue_payload_sha256"]
+        == first_report["fingerprint"]["issue_payload_sha256"]
+    )
+    assert (
+        second_report["fingerprint"]["fingerprint_sha256"]
+        != first_report["fingerprint"]["fingerprint_sha256"]
+    )
 
 
 def test_audit_fingerprint_changes_when_stale_manifest_discovery_source_changes(tmp_path):
@@ -468,18 +474,21 @@ def test_audit_fingerprint_changes_when_stale_manifest_discovery_source_changes(
         "# Q001 Throughput\n\nCurrent question text B.\n"
     )
 
-    assert second_report["fingerprint"]["input_counts"] == first_report["fingerprint"][
-        "input_counts"
-    ]
-    assert second_report["fingerprint"]["issue_payload_sha256"] == first_report[
-        "fingerprint"
-    ]["issue_payload_sha256"]
-    assert second_report["fingerprint"]["stale_manifest_input_sha256"] != first_report[
-        "fingerprint"
-    ]["stale_manifest_input_sha256"]
-    assert second_report["fingerprint"]["fingerprint_sha256"] != first_report["fingerprint"][
-        "fingerprint_sha256"
-    ]
+    assert (
+        second_report["fingerprint"]["input_counts"] == first_report["fingerprint"]["input_counts"]
+    )
+    assert (
+        second_report["fingerprint"]["issue_payload_sha256"]
+        == first_report["fingerprint"]["issue_payload_sha256"]
+    )
+    assert (
+        second_report["fingerprint"]["stale_manifest_input_sha256"]
+        != first_report["fingerprint"]["stale_manifest_input_sha256"]
+    )
+    assert (
+        second_report["fingerprint"]["fingerprint_sha256"]
+        != first_report["fingerprint"]["fingerprint_sha256"]
+    )
 
 
 def test_audit_rejects_repository_root_paper_md_report_without_touching_sentinel(tmp_path):
@@ -637,6 +646,46 @@ def test_audit_rejects_report_collision_with_manifest_evidence_without_touching_
     assert absolute_evidence_path.read_bytes() == evidence_before
 
 
+def test_audit_rejects_report_under_generated_inventory_directory_when_manifest_missing(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    inventory_path = Path(manifest["experiments"][0]["inventory_path"])
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = inventory_path.as_posix()
+    _write_config_yaml(repo, config)
+    absolute_inventory_path = repo / inventory_path
+    inventory_before = absolute_inventory_path.read_bytes()
+    (repo / MANIFEST_PATH).unlink()
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target generated inventory outputs" in result.stderr
+    assert absolute_inventory_path.read_bytes() == inventory_before
+
+
+def test_audit_rejects_report_under_generated_evidence_directory_when_manifest_malformed(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_pipeline(repo)
+    evidence_path = Path(manifest["experiments"][0]["evidence_path"])
+    config = _load_config_yaml(repo)
+    config["paper"]["audit_report"] = evidence_path.as_posix()
+    _write_config_yaml(repo, config)
+    absolute_evidence_path = repo / evidence_path
+    evidence_before = absolute_evidence_path.read_bytes()
+    (repo / MANIFEST_PATH).write_text("{not valid json}\n", encoding="utf-8")
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    assert "paper.audit_report must not target generated evidence outputs" in result.stderr
+    assert absolute_evidence_path.read_bytes() == evidence_before
+
+
 def test_audit_rejects_symlinked_report_output_directory_component(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     (repo / "paper").mkdir(exist_ok=True)
@@ -650,3 +699,18 @@ def test_audit_rejects_symlinked_report_output_directory_component(tmp_path):
     assert result.returncode == 2
     assert "paper.audit_report output path contains a symlink: linked-output" in result.stderr
     assert not (repo / "paper" / "PAPER.audit.json").exists()
+
+
+def test_audit_oserror_issue_messages_do_not_include_absolute_repo_path(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_pipeline(repo)
+    (repo / DRAFT_PATH).unlink()
+    (repo / DRAFT_PATH).mkdir()
+
+    result = run_paperctl(repo, "audit", "--stage", "deterministic")
+
+    assert result.returncode == 2
+    report = read_json(repo / AUDIT_PATH)
+    messages = [issue["message"] for issue in report["deterministic_health"]["issues"]]
+    assert any("could not read draft output: PAPER.draft.md" in message for message in messages)
+    assert all(repo.resolve().as_posix() not in message for message in messages)
