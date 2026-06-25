@@ -1,99 +1,85 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://paperctl.local/schemas/experiment-report.schema.json",
-  "title": "paperctl experiment report source contract",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "canonical_facts"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "execution_status": { "enum": ["completed", "failed", "incomplete", "unknown"] },
-    "canonical_facts": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/canonical_fact" }
-    }
-  },
-  "$defs": {
-    "relative_path": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://paperctl.local/schemas/experiment-report.schema.json",
+    "title": "paperctl experiment report source contract",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["schema_version", "canonical_facts"],
+    "properties": {
+        "schema_version": {"const": 1},
+        "execution_status": {"enum": ["completed", "failed", "incomplete", "unknown"]},
+        "canonical_facts": {"type": "array", "items": {"$ref": "#/$defs/canonical_fact"}}
     },
-    "scalar": {
-      "type": ["string", "number", "integer", "boolean", "null"]
-    },
-    "value_type": {
-      "enum": ["string", "number", "integer", "boolean", "null"]
-    },
-    "typed_value": {
-      "allOf": [
-        {
-          "if": {
-            "properties": { "value_type": { "const": "string" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "string" } } }
+    "$defs": {
+        "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
         },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "number" } },
-            "required": ["value_type"]
-          },
-          "then": {
+        "scalar": {"type": ["string", "number", "integer", "boolean", "null"]},
+        "value_type": {"enum": ["string", "number", "integer", "boolean", "null"]},
+        "typed_value": {
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "string"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "string"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "number"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "number"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "integer"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "integer"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "boolean"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "boolean"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "null"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "null"}}}
+                }
+            ]
+        },
+        "json_pointer": {"type": "string", "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"},
+        "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "selector_type", "selector"],
             "properties": {
-              "value": { "type": "number", "not": { "type": "integer" } }
+                "path": {"$ref": "#/$defs/relative_path"},
+                "selector_type": {"const": "json_pointer"},
+                "selector": {"$ref": "#/$defs/json_pointer"}
             }
-          }
         },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "integer" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "integer" } } }
-        },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "boolean" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "boolean" } } }
-        },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "null" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "null" } } }
+        "canonical_fact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fact_id", "value", "value_type", "unit", "source"],
+            "properties": {
+                "fact_id": {"type": "string", "minLength": 1},
+                "value": {"$ref": "#/$defs/scalar"},
+                "value_type": {"$ref": "#/$defs/value_type"},
+                "unit": {"type": ["string", "null"]},
+                "source": {"$ref": "#/$defs/source"}
+            },
+            "allOf": [{"$ref": "#/$defs/typed_value"}]
         }
-      ]
-    },
-    "json_pointer": {
-      "type": "string",
-      "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
-    },
-    "source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "selector_type", "selector"],
-      "properties": {
-        "path": { "$ref": "#/$defs/relative_path" },
-        "selector_type": { "const": "json_pointer" },
-        "selector": { "$ref": "#/$defs/json_pointer" }
-      }
-    },
-    "canonical_fact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["fact_id", "value", "value_type", "unit", "source"],
-      "properties": {
-        "fact_id": { "type": "string", "minLength": 1 },
-        "value": { "$ref": "#/$defs/scalar" },
-        "value_type": { "$ref": "#/$defs/value_type" },
-        "unit": { "type": ["string", "null"] },
-        "source": { "$ref": "#/$defs/source" }
-      },
-      "allOf": [{ "$ref": "#/$defs/typed_value" }]
     }
-  }
 }

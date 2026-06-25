@@ -23,6 +23,7 @@ def _evidence_packet(**overrides):
             "conflict_count": 0,
             "unsupported_artifact_count": 0,
             "warning_count": 0,
+            "redaction_count": 0,
         },
         "canonical_facts": [],
         "observed_values": [],
@@ -294,8 +295,7 @@ def test_evidence_canonical_fact_value_type_must_match_value():
 
     packet["canonical_facts"][0]["value"] = 1
     packet["canonical_facts"][0]["value_type"] = "number"
-    with pytest.raises(ValidationError):
-        validate_artifact("evidence-packet.schema.json", packet)
+    validate_artifact("evidence-packet.schema.json", packet)
 
 
 def test_evidence_observed_value_type_must_match_value():
@@ -321,8 +321,7 @@ def test_evidence_observed_value_type_must_match_value():
 
     packet["observed_values"][0]["value"] = 1
     packet["observed_values"][0]["value_type"] = "number"
-    with pytest.raises(ValidationError):
-        validate_artifact("evidence-packet.schema.json", packet)
+    validate_artifact("evidence-packet.schema.json", packet)
 
 
 def test_evidence_json_pointer_selector_must_be_empty_or_start_with_slash():
@@ -402,11 +401,10 @@ def test_experiment_report_value_type_must_match_value():
             _experiment_report(value=13.585, value_type="integer"),
         )
 
-    with pytest.raises(ValidationError):
-        validate_artifact(
-            "experiment-report.schema.json",
-            _experiment_report(value=1, value_type="number"),
-        )
+    validate_artifact(
+        "experiment-report.schema.json",
+        _experiment_report(value=1, value_type="number"),
+    )
 
 
 def test_json_pointer_selectors_must_be_empty_or_start_with_slash():

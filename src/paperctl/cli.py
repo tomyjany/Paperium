@@ -5,6 +5,7 @@ import sys
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
 from paperctl.discovery import DiscoveryError, discover
 from paperctl.inventory import InventoryError, inventory_all, load_manifest
+from paperctl.normalize import NormalizeError, normalize_all
 
 
 SUCCESS = 0
@@ -71,6 +72,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"inventoried {result.experiment_count} experiments")
         print(
             f"inventory artifacts: {result.created} created, "
+            f"{result.replaced} replaced, {result.unchanged} unchanged"
+        )
+        return SUCCESS
+    if args.command == "normalize":
+        try:
+            config = load_config(repo)
+            result = normalize_all(repo, config, args.force)
+        except (ConfigError, NormalizeError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        print(f"read {result.manifest_path}")
+        print(f"normalized {result.experiment_count} experiments")
+        print(
+            f"evidence packets: {result.created} created, "
             f"{result.replaced} replaced, {result.unchanged} unchanged"
         )
         return SUCCESS

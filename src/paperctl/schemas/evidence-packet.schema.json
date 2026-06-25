@@ -1,305 +1,275 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://paperctl.local/schemas/evidence-packet.schema.json",
-  "title": "paperctl evidence packet",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "artifact_type",
-    "question_path",
-    "experiment_path",
-    "preanalysis_disposition",
-    "execution_status",
-    "evidence_status",
-    "reason_codes",
-    "counts",
-    "canonical_facts",
-    "observed_values",
-    "previews",
-    "diagnostics",
-    "conflicts",
-    "unsupported_artifacts",
-    "warnings"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "artifact_type": { "const": "evidence_packet" },
-    "question_path": { "$ref": "#/$defs/relative_path" },
-    "experiment_path": { "$ref": "#/$defs/relative_path" },
-    "inventory_path": { "$ref": "#/$defs/relative_path" },
-    "fingerprint": { "type": "object" },
-    "preanalysis_disposition": {
-      "enum": ["analysis_candidate", "blocked", "needs_human_review"]
-    },
-    "execution_status": { "enum": ["completed", "failed", "incomplete", "unknown"] },
-    "evidence_status": { "enum": ["available", "missing", "unsupported", "conflicting"] },
-    "reason_codes": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/reason_code" },
-      "uniqueItems": true
-    },
-    "counts": { "$ref": "#/$defs/counts" },
-    "canonical_facts": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/canonical_fact" }
-    },
-    "observed_values": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/observed_value" }
-    },
-    "previews": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/source_record" }
-    },
-    "diagnostics": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/source_record" }
-    },
-    "conflicts": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/conflict" }
-    },
-    "unsupported_artifacts": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/unsupported_artifact" }
-    },
-    "warnings": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/source_record" }
-    }
-  },
-  "$defs": {
-    "hash": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
-    },
-    "relative_path": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
-    },
-    "reason_code": {
-      "enum": [
-        "no_usable_evidence",
-        "unsupported_only",
-        "malformed_experiment_report",
-        "unknown_experiment_report_version",
-        "source_contract_selector_missing",
-        "source_contract_type_mismatch",
-        "source_contract_value_mismatch",
-        "duplicate_fact_id_in_source",
-        "canonical_conflict",
-        "unsafe_symlink_for_canonical_path",
-        "normalization_truncated"
-      ]
-    },
-    "scalar": {
-      "type": ["string", "number", "integer", "boolean", "null"]
-    },
-    "value_type": {
-      "enum": ["string", "number", "integer", "boolean", "null"]
-    },
-    "typed_value": {
-      "allOf": [
-        {
-          "if": {
-            "properties": { "value_type": { "const": "string" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "string" } } }
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://paperctl.local/schemas/evidence-packet.schema.json",
+    "title": "paperctl evidence packet",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_version",
+        "artifact_type",
+        "question_path",
+        "experiment_path",
+        "preanalysis_disposition",
+        "execution_status",
+        "evidence_status",
+        "reason_codes",
+        "counts",
+        "canonical_facts",
+        "observed_values",
+        "previews",
+        "diagnostics",
+        "conflicts",
+        "unsupported_artifacts",
+        "warnings"
+    ],
+    "properties": {
+        "schema_version": {"const": 1},
+        "artifact_type": {"const": "evidence_packet"},
+        "question_path": {"$ref": "#/$defs/relative_path"},
+        "experiment_path": {"$ref": "#/$defs/relative_path"},
+        "inventory_path": {"$ref": "#/$defs/relative_path"},
+        "fingerprint": {"type": "object"},
+        "preanalysis_disposition": {
+            "enum": ["analysis_candidate", "blocked", "needs_human_review"]
         },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "number" } },
-            "required": ["value_type"]
-          },
-          "then": {
+        "execution_status": {"enum": ["completed", "failed", "incomplete", "unknown"]},
+        "evidence_status": {"enum": ["available", "missing", "unsupported", "conflicting"]},
+        "reason_codes": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/reason_code"},
+            "uniqueItems": true
+        },
+        "counts": {"$ref": "#/$defs/counts"},
+        "canonical_facts": {"type": "array", "items": {"$ref": "#/$defs/canonical_fact"}},
+        "observed_values": {"type": "array", "items": {"$ref": "#/$defs/observed_value"}},
+        "previews": {"type": "array", "items": {"$ref": "#/$defs/source_record"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/source_record"}},
+        "conflicts": {"type": "array", "items": {"$ref": "#/$defs/conflict"}},
+        "unsupported_artifacts": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/unsupported_artifact"}
+        },
+        "warnings": {"type": "array", "items": {"$ref": "#/$defs/source_record"}}
+    },
+    "$defs": {
+        "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "reason_code": {
+            "enum": [
+                "no_usable_evidence",
+                "unsupported_only",
+                "malformed_experiment_report",
+                "unknown_experiment_report_version",
+                "source_contract_selector_missing",
+                "source_contract_type_mismatch",
+                "source_contract_value_mismatch",
+                "duplicate_fact_id_in_source",
+                "canonical_conflict",
+                "unsafe_symlink_for_canonical_path",
+                "normalization_truncated"
+            ]
+        },
+        "scalar": {"type": ["string", "number", "integer", "boolean", "null"]},
+        "value_type": {"enum": ["string", "number", "integer", "boolean", "null"]},
+        "typed_value": {
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "string"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "string"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "number"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "number"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "integer"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "integer"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "boolean"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "boolean"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "null"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "null"}}}
+                }
+            ]
+        },
+        "json_pointer_source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "path",
+                "source_hash",
+                "selector_type",
+                "selector",
+                "adapter",
+                "adapter_version"
+            ],
             "properties": {
-              "value": { "type": "number", "not": { "type": "integer" } }
+                "path": {"$ref": "#/$defs/relative_path"},
+                "source_hash": {"$ref": "#/$defs/hash"},
+                "selector_type": {"const": "json_pointer"},
+                "selector": {"$ref": "#/$defs/json_pointer"},
+                "adapter": {"type": "string"},
+                "adapter_version": {"type": "string"}
             }
-          }
         },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "integer" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "integer" } } }
+        "line_range_source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "path",
+                "source_hash",
+                "selector_type",
+                "line_start",
+                "line_end",
+                "adapter",
+                "adapter_version"
+            ],
+            "properties": {
+                "path": {"$ref": "#/$defs/relative_path"},
+                "source_hash": {"$ref": "#/$defs/hash"},
+                "selector_type": {"const": "line_range"},
+                "line_start": {"type": "integer", "minimum": 1},
+                "line_end": {"type": "integer", "minimum": 1},
+                "adapter": {"type": "string"},
+                "adapter_version": {"type": "string"}
+            }
         },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "boolean" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "boolean" } } }
+        "value_source": {
+            "oneOf": [
+                {"$ref": "#/$defs/json_pointer_source"},
+                {"$ref": "#/$defs/line_range_source"}
+            ]
         },
-        {
-          "if": {
-            "properties": { "value_type": { "const": "null" } },
-            "required": ["value_type"]
-          },
-          "then": { "properties": { "value": { "type": "null" } } }
+        "record_source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+                "path": {"$ref": "#/$defs/relative_path"},
+                "source_hash": {"$ref": "#/$defs/hash"},
+                "selector_type": {"enum": ["json_pointer", "line_range", "none"]},
+                "selector": {"type": ["string", "null"]},
+                "line_start": {"type": ["integer", "null"], "minimum": 1},
+                "line_end": {"type": ["integer", "null"], "minimum": 1},
+                "adapter": {"type": "string"},
+                "adapter_version": {"type": "string"}
+            },
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"selector_type": {"const": "json_pointer"}},
+                        "required": ["selector_type"]
+                    },
+                    "then": {
+                        "required": ["selector"],
+                        "properties": {"selector": {"$ref": "#/$defs/json_pointer"}}
+                    }
+                }
+            ]
+        },
+        "json_pointer": {"type": "string", "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"},
+        "canonical_fact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fact_id", "value", "value_type", "unit", "source"],
+            "properties": {
+                "fact_id": {"type": "string", "minLength": 1},
+                "value": {"$ref": "#/$defs/scalar"},
+                "value_type": {"$ref": "#/$defs/value_type"},
+                "unit": {"type": ["string", "null"]},
+                "source": {"$ref": "#/$defs/value_source"}
+            },
+            "allOf": [{"$ref": "#/$defs/typed_value"}]
+        },
+        "observed_value": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "value_type", "unit", "source"],
+            "properties": {
+                "value": {"$ref": "#/$defs/scalar"},
+                "value_type": {"$ref": "#/$defs/value_type"},
+                "unit": {"type": ["string", "null"]},
+                "source": {"$ref": "#/$defs/value_source"}
+            },
+            "allOf": [{"$ref": "#/$defs/typed_value"}]
+        },
+        "source_record": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["source", "message"],
+            "properties": {
+                "source": {"$ref": "#/$defs/record_source"},
+                "message": {"type": "string"}
+            }
+        },
+        "conflict": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["reason_code", "fact_id", "sources"],
+            "properties": {
+                "reason_code": {"const": "canonical_conflict"},
+                "fact_id": {"type": "string", "minLength": 1},
+                "sources": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {"$ref": "#/$defs/value_source"}
+                }
+            }
+        },
+        "unsupported_artifact": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["path", "reason_code"],
+            "properties": {
+                "path": {"$ref": "#/$defs/relative_path"},
+                "reason_code": {"$ref": "#/$defs/reason_code"}
+            }
+        },
+        "counts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "canonical_fact_count",
+                "observed_value_count",
+                "preview_count",
+                "diagnostic_count",
+                "conflict_count",
+                "unsupported_artifact_count",
+                "warning_count",
+                "redaction_count"
+            ],
+            "properties": {
+                "canonical_fact_count": {"type": "integer", "minimum": 0},
+                "observed_value_count": {"type": "integer", "minimum": 0},
+                "preview_count": {"type": "integer", "minimum": 0},
+                "diagnostic_count": {"type": "integer", "minimum": 0},
+                "conflict_count": {"type": "integer", "minimum": 0},
+                "unsupported_artifact_count": {"type": "integer", "minimum": 0},
+                "warning_count": {"type": "integer", "minimum": 0},
+                "redaction_count": {"type": "integer", "minimum": 0}
+            }
         }
-      ]
-    },
-    "json_pointer_source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "path",
-        "source_hash",
-        "selector_type",
-        "selector",
-        "adapter",
-        "adapter_version"
-      ],
-      "properties": {
-        "path": { "$ref": "#/$defs/relative_path" },
-        "source_hash": { "$ref": "#/$defs/hash" },
-        "selector_type": { "const": "json_pointer" },
-        "selector": { "$ref": "#/$defs/json_pointer" },
-        "adapter": { "type": "string" },
-        "adapter_version": { "type": "string" }
-      }
-    },
-    "line_range_source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "path",
-        "source_hash",
-        "selector_type",
-        "line_start",
-        "line_end",
-        "adapter",
-        "adapter_version"
-      ],
-      "properties": {
-        "path": { "$ref": "#/$defs/relative_path" },
-        "source_hash": { "$ref": "#/$defs/hash" },
-        "selector_type": { "const": "line_range" },
-        "line_start": { "type": "integer", "minimum": 1 },
-        "line_end": { "type": "integer", "minimum": 1 },
-        "adapter": { "type": "string" },
-        "adapter_version": { "type": "string" }
-      }
-    },
-    "value_source": {
-      "oneOf": [
-        { "$ref": "#/$defs/json_pointer_source" },
-        { "$ref": "#/$defs/line_range_source" }
-      ]
-    },
-    "record_source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path"],
-      "properties": {
-        "path": { "$ref": "#/$defs/relative_path" },
-        "source_hash": { "$ref": "#/$defs/hash" },
-        "selector_type": { "enum": ["json_pointer", "line_range", "none"] },
-        "selector": { "type": ["string", "null"] },
-        "line_start": { "type": ["integer", "null"], "minimum": 1 },
-        "line_end": { "type": ["integer", "null"], "minimum": 1 },
-        "adapter": { "type": "string" },
-        "adapter_version": { "type": "string" }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "selector_type": { "const": "json_pointer" } },
-            "required": ["selector_type"]
-          },
-          "then": {
-            "required": ["selector"],
-            "properties": { "selector": { "$ref": "#/$defs/json_pointer" } }
-          }
-        }
-      ]
-    },
-    "json_pointer": {
-      "type": "string",
-      "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
-    },
-    "canonical_fact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["fact_id", "value", "value_type", "unit", "source"],
-      "properties": {
-        "fact_id": { "type": "string", "minLength": 1 },
-        "value": { "$ref": "#/$defs/scalar" },
-        "value_type": { "$ref": "#/$defs/value_type" },
-        "unit": { "type": ["string", "null"] },
-        "source": { "$ref": "#/$defs/value_source" }
-      },
-      "allOf": [{ "$ref": "#/$defs/typed_value" }]
-    },
-    "observed_value": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["value", "value_type", "unit", "source"],
-      "properties": {
-        "value": { "$ref": "#/$defs/scalar" },
-        "value_type": { "$ref": "#/$defs/value_type" },
-        "unit": { "type": ["string", "null"] },
-        "source": { "$ref": "#/$defs/value_source" }
-      },
-      "allOf": [{ "$ref": "#/$defs/typed_value" }]
-    },
-    "source_record": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["source", "message"],
-      "properties": {
-        "source": { "$ref": "#/$defs/record_source" },
-        "message": { "type": "string" }
-      }
-    },
-    "conflict": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["reason_code", "fact_id", "sources"],
-      "properties": {
-        "reason_code": { "const": "canonical_conflict" },
-        "fact_id": { "type": "string", "minLength": 1 },
-        "sources": {
-          "type": "array",
-          "minItems": 2,
-          "items": { "$ref": "#/$defs/value_source" }
-        }
-      }
-    },
-    "unsupported_artifact": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["path", "reason_code"],
-      "properties": {
-        "path": { "$ref": "#/$defs/relative_path" },
-        "reason_code": { "$ref": "#/$defs/reason_code" }
-      }
-    },
-    "counts": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "canonical_fact_count",
-        "observed_value_count",
-        "preview_count",
-        "diagnostic_count",
-        "conflict_count",
-        "unsupported_artifact_count",
-        "warning_count"
-      ],
-      "properties": {
-        "canonical_fact_count": { "type": "integer", "minimum": 0 },
-        "observed_value_count": { "type": "integer", "minimum": 0 },
-        "preview_count": { "type": "integer", "minimum": 0 },
-        "diagnostic_count": { "type": "integer", "minimum": 0 },
-        "conflict_count": { "type": "integer", "minimum": 0 },
-        "unsupported_artifact_count": { "type": "integer", "minimum": 0 },
-        "warning_count": { "type": "integer", "minimum": 0 }
-      }
     }
-  }
 }
