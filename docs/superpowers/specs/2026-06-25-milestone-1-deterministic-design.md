@@ -97,8 +97,8 @@ Exit behavior:
 
 ```text
 discover
-→ inventory/extract
-→ normalize
+→ inventory
+→ normalize/evidence extraction
 → render PAPER.draft.md
 → deterministic audit
 → record publication blockers
@@ -135,7 +135,7 @@ It must not create or modify questions, experiments, metadata, README files, out
 
 ## Configuration
 
-`paper.yaml` is the only user-authored YAML file. It is parsed with safe YAML loading, custom tags are prohibited, and the parsed object is validated by `paper-config.schema.json`.
+`paper.yaml` is the only user-authored framework configuration YAML file. It is parsed with safe YAML loading, custom tags are prohibited, and the parsed object is validated by `paper-config.schema.json`.
 
 Unknown keys fail validation. All paths are repository-relative. Absolute paths, `..` escapes, and resolved paths outside the repository are rejected.
 
@@ -196,14 +196,42 @@ Requirements:
 - experiment references must resolve uniquely;
 - source paths are relative to the experiment directory;
 - selectors must resolve exactly once;
-- `fact_id` values are unique within an experiment;
+- `fact_id` values are unique within each single canonical declaration source;
 - units are explicitly configured or present in the source;
 - units are never inferred from field names;
-- missing files, invalid selectors, type mismatches, path escapes, or duplicate fact IDs are deterministic-health errors.
+- for user-authored `paper.yaml` `canonical_facts` mappings, missing files, invalid selectors, type mismatches, path escapes, or duplicate fact IDs within that configured declaration source are deterministic-health errors.
 
 `default_canonical_artifacts` does not make every scalar canonical. `outputs/experiment_report.json` is authoritative only for fields defined by its versioned contract. Other canonical facts require explicit selector mappings.
 
 Canonical mappings establish authoritative facts, not conclusions, inclusion, or headline importance.
+
+Milestone 1 `experiment_report.json` contract:
+
+```json
+{
+  "schema_version": 1,
+  "execution_status": "completed",
+  "canonical_facts": [
+    {
+      "fact_id": "measured_throughput",
+      "value": 13.585,
+      "value_type": "number",
+      "unit": "pages_per_second",
+      "source": {
+        "path": "outputs/hpi_2wpg_summary.json",
+        "selector_type": "json_pointer",
+        "selector": "/primary_slice/pages_per_second"
+      }
+    }
+  ]
+}
+```
+
+Only `execution_status` and entries in `canonical_facts` have contract meaning in Milestone 1. Each `canonical_facts` entry must include `fact_id`, `value`, `value_type`, `unit` or `null`, and a source path/selector. The selector is resolved and the source value is compared with `value`; mismatches become explicit canonical conflicts. `execution_status` affects only deterministic status, not research meaning.
+
+A single canonical declaration source is malformed if it repeats a `fact_id` for the same experiment. Distinct canonical declaration sources may intentionally claim the same `fact_id`; if their resolved values, units, or source selectors disagree, the evidence packet records a `canonical_conflict`, `evidence_status` becomes `conflicting`, and `preanalysis_disposition` becomes `needs_human_review`.
+
+An `experiment_report.json` at a default canonical artifact path creates canonical facts only if it declares a recognized `schema_version` and validates against `experiment-report.schema.json`. A recognized but malformed report is a deterministic blocker for that experiment. Unrecognized structured files at the same path may still be inventoried and extracted as ordinary candidate evidence, but they do not create canonical facts.
 
 ## Discovery
 
@@ -220,9 +248,19 @@ evidence_status: available | missing | unsupported | conflicting
 reason_codes: [...]
 ```
 
+The manifest is the status index for the latest completed deterministic stage. `discover` creates path identities and conservative initial status rows using `execution_status: unknown`, `evidence_status: missing`, `preanalysis_disposition: blocked`, and reason code `normalization_not_run`. `inventory` and `normalize` may regenerate the manifest status fields after their own artifacts validate, but they must not change path identity or silently add/remove experiments without rerunning discovery. `render` and `audit` require a manifest and evidence packets produced by the normalized stage view; they fail clearly if only discovery-level placeholders exist.
+
+After normalization, `preanalysis_disposition` is assigned deterministically:
+
+- `analysis_candidate`: `evidence_status` is `available`, no deterministic blocker reason codes exist, and no human-review reason codes exist. `execution_status` may be `completed`, `failed`, `incomplete`, or `unknown`; execution failure alone does not block analysis candidacy.
+- `blocked`: required experiment evidence inputs cannot be used, including missing usable evidence, unsupported-only evidence, malformed recognized `experiment_report.json`, duplicate canonical `fact_id` values within one source artifact, or source contract type mismatches.
+- `needs_human_review`: deterministic extraction found explicit canonical conflicts that cannot be resolved without human judgment.
+
+`reason_codes` record the exact deterministic basis, such as `normalization_not_run`, `no_usable_evidence`, `unsupported_only`, `source_contract_missing`, `source_contract_type_mismatch`, `malformed_experiment_report`, or `canonical_conflict`.
+
 Milestone 1 does not assign final labels such as `included`, `excluded_smoke_only`, or `excluded_superseded`.
 
-`execution_status` is set only from explicit structured contracts or metadata. Otherwise it is `unknown`. Do not infer completion from README prose, filenames, or warning/error matches.
+`execution_status` is set only from a validated Milestone 1 `experiment_report.json` contract. Otherwise it is `unknown`. Legacy metadata files may be inventoried and extracted as candidate evidence, but they do not set `execution_status` unless a future milestone defines and validates their schema. Do not infer completion from README prose, filenames, or warning/error matches.
 
 A failed execution is not automatically excluded. Failed experiments may still be `analysis_candidate` if sufficient artifacts exist.
 
@@ -245,8 +283,8 @@ Unknown or binary files are inventoried but unsupported unless an explicit adapt
 Initial adapters:
 
 - JSON/YAML: scalar values with exact JSON Pointer paths, bounded by depth and candidate limits.
-- CSV: schema, row count, selected rows, and basic numeric summaries.
-- JSONL: streamed line count, schema/sample, head/tail, and bounded summaries.
+- CSV: schema, row count, selected rows, and bounded numeric summary previews.
+- JSONL: streamed line count, schema/sample, head/tail, and bounded numeric summary previews.
 - Markdown: headings and short escaped excerpts with line ranges.
 - Logs: streamed head/tail plus fixed warning/error pattern matches with line numbers.
 - Unknown/binary: inventory-only unsupported records.
@@ -254,6 +292,8 @@ Initial adapters:
 `maximum_file_bytes` means maximum full-parse size. Streaming adapters may inspect larger logs and JSONL files for bounded previews, columns, matches, and summaries.
 
 Markdown and log adapters produce previews and diagnostics, not candidate facts. Unstructured numbers must not become facts automatically.
+
+CSV and JSONL numeric summaries are also previews/diagnostics, not candidate facts or accepted numeric claims. They must record their calculation label, source path, source hash, inspected row/line bounds, omitted counts, and adapter version. They may be rendered only in preview sections, never as canonical or candidate facts.
 
 Error and warning matches use a documented fixed pattern set. They are diagnostics, not proof of failed execution.
 
@@ -277,7 +317,7 @@ Each candidate fact retains:
 - extraction adapter;
 - adapter version.
 
-Conflict detection occurs only between sources explicitly claiming the same `fact_id` or contract field. Do not infer conflicts from similar field names.
+Conflict detection occurs only between distinct canonical declaration sources explicitly claiming the same `fact_id` or contract field. Duplicate `fact_id` entries within one declaration source are malformed input, not an evidence conflict. Do not infer conflicts from similar field names.
 
 Aggregate `evidence_status` deterministically:
 
@@ -293,9 +333,10 @@ Non-finite numbers such as NaN and Infinity are rejected.
 Supported selectors in Milestone 1:
 
 - JSON Pointer for JSON and YAML.
-- Named row/column selectors for tabular data when explicit canonical mappings require them.
 
-Selector failures are deterministic-health errors for canonical facts.
+Selector failures in user-authored `paper.yaml` canonical mappings are deterministic-health errors. Selector failures inside source `experiment_report.json` artifacts make that experiment `blocked` unless they participate in an explicit cross-source canonical conflict.
+
+Tabular canonical selectors are deferred. CSV and JSONL adapters may produce bounded previews and diagnostic summaries, but Milestone 1 does not accept CSV/JSONL cells as canonical facts through selector mappings.
 
 ## Rendering
 
@@ -322,7 +363,9 @@ For each experiment, render:
 - source artifact paths/selectors;
 - conflicts and warnings.
 
-Do not render interpretation, meaning, conclusions, recommendations, semantic verdicts, deterministic comparison tables that imply meaning, or placeholder sections such as "interpretation unavailable."
+Do not render interpretation, meaning, conclusions, recommendations, semantic verdicts, rankings, ratios, "best" claims, or placeholder sections such as "interpretation unavailable."
+
+Milestone 1 may render mechanical evidence tables: per-experiment canonical facts, bounded candidate facts, source selectors, and status fields. It does not render cross-experiment comparison tables that imply research meaning. Broader deterministic comparison tables are deferred until later milestones have validated semantic analyses and explicit claim relationships.
 
 Keep the draft bounded. Render canonical facts and a configured subset of candidate facts/previews, then report omitted counts and point to the complete evidence packet.
 
@@ -382,6 +425,10 @@ Distinguish:
 
 A correctly recorded evidence conflict or truncation warning is not itself a deterministic pipeline failure.
 
+Deterministic-health failures are reserved for framework, configuration, safety, and artifact-integrity failures that prevent trustworthy deterministic output. Examples include invalid `paper.yaml`, unknown config keys, unsafe paths, path traversal, symlink escapes outside the repository, stale or schema-invalid prerequisite artifacts, invalid user-authored `canonical_facts` mappings, generated artifact schema failures, unresolved provenance for accepted canonical facts, and render nondeterminism.
+
+Experiment evidence problems are represented in manifest/evidence status and block publication without necessarily failing deterministic health. Examples include no usable evidence, unsupported-only artifacts, malformed recognized `experiment_report.json`, source report selectors that fail to resolve, source report type mismatches, explicit canonical conflicts between distinct sources, and bounded truncation. If such problems are fully recorded in valid generated artifacts, `audit --stage deterministic` may still pass and `build` may exit 0 while publication remains blocked.
+
 Publication blockers include:
 
 ```text
@@ -389,8 +436,10 @@ analysis_candidate  → missing_semantic_analysis
 blocked             → unresolved_preanalysis_blocker
 needs_human_review  → needs_human_review
 conflicting evidence → unresolved_evidence_conflict
-missing/unsupported evidence without final disposition → unresolved_evidence_blocker
+missing/unsupported evidence in Milestone 1 status fields → unresolved_evidence_blocker
 ```
+
+Publication blockers use deterministic precedence and deduplication per experiment. Emit at most one primary blocker from `preanalysis_disposition` in this order: `needs_human_review`, `blocked`, `analysis_candidate`. Then emit at most one additional evidence blocker if `evidence_status` is `conflicting`, `missing`, or `unsupported`, ordered as `conflicting`, `missing`, `unsupported`. Sort final blockers by experiment reference, blocker priority, then code. Do not emit duplicate blocker codes for the same experiment.
 
 Audit must never modify or delete an existing `PAPER.md`.
 
@@ -558,7 +607,7 @@ It should:
 - explain that it builds a deterministic pre-analysis evidence draft;
 - verify the intended repository;
 - require existing `paper.yaml`;
-- run or guide `paperctl build --repo <repository-root>`;
+- run or guide `paperctl --repo <repository-root> build`;
 - fail clearly if `paperctl` is unavailable;
 - report deterministic build status;
 - report path to `PAPER.draft.md`;
@@ -581,7 +630,7 @@ It should not:
 
 Create one compact integration fixture with one question and approximately six experiments:
 
-- completed experiment with explicit metadata or validated contract for `execution_status=completed`;
+- completed experiment with validated `experiment_report.json` contract for `execution_status=completed`;
 - explicitly mapped canonical facts;
 - incomplete experiment with missing expected outputs;
 - legacy experiment directory without modern metadata;
