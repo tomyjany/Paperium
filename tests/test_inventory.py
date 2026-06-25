@@ -112,6 +112,51 @@ def test_inventory_records_regular_files_and_symlinks_without_following_them(tmp
     assert not any(path.startswith(f"{linked_dir_path}/") for path in artifacts)
 
 
+def test_inventory_fingerprint_exposes_complete_artifact_listing(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = (
+        repo
+        / "questions"
+        / "q001-throughput"
+        / "experiments"
+        / "exp001-completed"
+    )
+    (experiment / "readme-link.md").symlink_to("README.md")
+    _discover(repo)
+
+    result = _inventory(repo)
+
+    assert result.returncode == 0, result.stderr
+    inventory = _inventory_for(repo, "exp001-completed")
+    listing = inventory["fingerprint"]["extra_inputs"]["artifact_listing"]
+    artifacts = inventory["artifacts"]
+
+    assert listing == artifacts
+    assert [artifact["path"] for artifact in listing] == sorted(
+        artifact["path"] for artifact in listing
+    )
+
+    base = "questions/q001-throughput/experiments/exp001-completed"
+    assert {
+        "path": f"{base}/README.md",
+        "file_type": "regular",
+        "byte_size": (repo / base / "README.md").stat().st_size,
+        "sha256": sha256_file(repo / base / "README.md"),
+        "kind": "markdown",
+        "support_status": "supported",
+        "symlink_target": None,
+    } in listing
+    assert {
+        "path": f"{base}/readme-link.md",
+        "file_type": "symlink",
+        "byte_size": None,
+        "sha256": None,
+        "kind": "markdown",
+        "support_status": "unsupported",
+        "symlink_target": "README.md",
+    } in listing
+
+
 def test_inventory_honors_exact_exclusion_list(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     experiment = (

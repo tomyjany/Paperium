@@ -52,6 +52,7 @@ def build_stage_fingerprint(
             prerequisite_artifacts or [], key=lambda prerequisite: prerequisite.path
         )
     ]
+    extra_inputs_payload = extra_inputs or {}
     payload = {
         "stage": {"name": stage_name, "version": stage_version},
         "schema_version": schema_version,
@@ -60,7 +61,8 @@ def build_stage_fingerprint(
         "source_files_sha256": canonical_json_hash(sources),
         "prerequisite_artifacts": prerequisites,
         "prerequisite_artifacts_sha256": canonical_json_hash(prerequisites),
-        "extra_inputs_sha256": canonical_json_hash(extra_inputs or {}),
+        "extra_inputs": extra_inputs_payload,
+        "extra_inputs_sha256": canonical_json_hash(extra_inputs_payload),
     }
     payload["fingerprint_sha256"] = canonical_json_hash(payload)
     return payload

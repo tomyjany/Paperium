@@ -37,6 +37,7 @@ def test_stage_fingerprint_records_versions_config_sources_and_prerequisites(tmp
     manifest = tmp_path / "manifest.json"
     write_json_atomic(manifest, _valid_manifest())
 
+    extra_inputs = {"listing_sha256": "sha256:" + "a" * 64}
     fingerprint = build_stage_fingerprint(
         stage_name="inventory",
         stage_version=1,
@@ -50,7 +51,7 @@ def test_stage_fingerprint_records_versions_config_sources_and_prerequisites(tmp
                 schema_name="manifest.schema.json",
             )
         ],
-        extra_inputs={"listing_sha256": "sha256:" + "a" * 64},
+        extra_inputs=extra_inputs,
     )
 
     assert fingerprint["stage"] == {"name": "inventory", "version": 1}
@@ -71,9 +72,8 @@ def test_stage_fingerprint_records_versions_config_sources_and_prerequisites(tmp
             "sha256": sha256_file(manifest),
         }
     ]
-    assert fingerprint["extra_inputs_sha256"] == canonical_json_hash(
-        {"listing_sha256": "sha256:" + "a" * 64}
-    )
+    assert fingerprint["extra_inputs"] == extra_inputs
+    assert fingerprint["extra_inputs_sha256"] == canonical_json_hash(extra_inputs)
     assert fingerprint["fingerprint_sha256"].startswith("sha256:")
 
 

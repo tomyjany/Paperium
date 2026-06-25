@@ -13,7 +13,7 @@ from paperctl._support.fingerprints import (
     SourceFile,
     build_stage_fingerprint,
 )
-from paperctl._support.hashing import canonical_json_hash, sha256_file
+from paperctl._support.hashing import sha256_file
 from paperctl._support.jsonio import dump_json_bytes, write_json_atomic
 from paperctl._support.paths import resolve_repo_relative_path
 from paperctl._support.schema import validate_artifact
@@ -267,7 +267,7 @@ def _inventory_fingerprint(
             )
         ],
         extra_inputs={
-            "artifact_listing_sha256": canonical_json_hash(listing_inputs),
+            "artifact_listing": listing_inputs,
             "artifact_count": len(artifacts),
         },
     )
