@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from conftest import copy_fixture_repo, read_json, run_paperctl
 from paperctl._support.hashing import sha256_file
 from paperctl._support.schema import validate_artifact
+from paperctl import inventory as inventory_module
+from paperctl.inventory import InventoryError
 
 
 MANIFEST_PATH = Path("paper/work/manifest.json")
@@ -55,11 +59,7 @@ def test_inventory_command_fails_when_manifest_is_missing_or_stale(tmp_path):
 
     _discover(repo)
     new_experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp999-after-discovery"
+        repo / "questions" / "q001-throughput" / "experiments" / "exp999-after-discovery"
     )
     new_experiment.mkdir()
     (new_experiment / "README.md").write_text("# Late experiment\n", encoding="utf-8")
@@ -73,13 +73,7 @@ def test_inventory_command_fails_when_manifest_is_missing_or_stale(tmp_path):
 
 def test_inventory_records_regular_files_and_symlinks_without_following_them(tmp_path):
     repo = copy_fixture_repo(tmp_path)
-    experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp001-completed"
-    )
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp001-completed"
     (experiment / "readme-link.md").symlink_to("README.md")
     (experiment / "outputs-link").symlink_to("outputs", target_is_directory=True)
     _discover(repo)
@@ -114,13 +108,7 @@ def test_inventory_records_regular_files_and_symlinks_without_following_them(tmp
 
 def test_inventory_fingerprint_exposes_complete_artifact_listing(tmp_path):
     repo = copy_fixture_repo(tmp_path)
-    experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp001-completed"
-    )
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp001-completed"
     (experiment / "readme-link.md").symlink_to("README.md")
     _discover(repo)
 
@@ -159,13 +147,7 @@ def test_inventory_fingerprint_exposes_complete_artifact_listing(tmp_path):
 
 def test_inventory_honors_exact_exclusion_list(tmp_path):
     repo = copy_fixture_repo(tmp_path)
-    experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp002-incomplete"
-    )
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp002-incomplete"
     for name in EXCLUDED_NAMES - {".DS_Store"}:
         directory = experiment / name
         directory.mkdir()
@@ -177,7 +159,9 @@ def test_inventory_honors_exact_exclusion_list(tmp_path):
     result = _inventory(repo)
 
     assert result.returncode == 0, result.stderr
-    artifact_paths = [artifact["path"] for artifact in _inventory_for(repo, "exp002-incomplete")["artifacts"]]
+    artifact_paths = [
+        artifact["path"] for artifact in _inventory_for(repo, "exp002-incomplete")["artifacts"]
+    ]
     assert any(path.endswith("/not_excluded.pyc") for path in artifact_paths)
     for path in artifact_paths:
         assert EXCLUDED_NAMES.isdisjoint(Path(path).parts)
@@ -188,11 +172,7 @@ def test_external_symlink_is_unsupported_artifact_not_global_failure(tmp_path):
     outside = tmp_path / "outside.txt"
     outside.write_text("outside\n", encoding="utf-8")
     experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp005-unsupported-and-previews"
+        repo / "questions" / "q001-throughput" / "experiments" / "exp005-unsupported-and-previews"
     )
     external_link = experiment / "external-result.json"
     external_link.symlink_to(outside)
@@ -217,13 +197,7 @@ def test_manifest_symlink_escape_is_rejected_after_discovery(tmp_path):
     outside_experiment = tmp_path / "outside-experiment"
     outside_experiment.mkdir()
     (outside_experiment / "README.md").write_text("# Outside\n", encoding="utf-8")
-    escaped = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp999-escaped"
-    )
+    escaped = repo / "questions" / "q001-throughput" / "experiments" / "exp999-escaped"
     escaped.symlink_to(outside_experiment, target_is_directory=True)
     _discover(repo)
 
@@ -236,13 +210,7 @@ def test_manifest_symlink_escape_is_rejected_after_discovery(tmp_path):
 
 def test_fixed_extension_map_classifies_known_kinds_and_binary_unknowns(tmp_path):
     repo = copy_fixture_repo(tmp_path)
-    experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp001-completed"
-    )
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp001-completed"
     (experiment / "config.yaml").write_text("a: 1\n", encoding="utf-8")
     (experiment / "table.csv").write_text("a,b\n1,2\n", encoding="utf-8")
     (experiment / "events.jsonl").write_text('{"a": 1}\n', encoding="utf-8")
@@ -272,15 +240,106 @@ def test_fixed_extension_map_classifies_known_kinds_and_binary_unknowns(tmp_path
     assert binary["support_status"] == "unsupported"
 
 
+def test_binary_detection_uses_bounded_byte_sniff(tmp_path):
+    file = tmp_path / "sample.txt"
+    file.write_bytes(b"abcd\xff")
+
+    assert inventory_module._is_binary(file, sniff_size=4) is False
+    assert inventory_module._is_binary(file, sniff_size=5) is True
+
+
+def test_regular_file_scan_errors_are_inventory_errors(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    file = repo / "questions" / "q001" / "experiments" / "exp001" / "result.txt"
+    file.parent.mkdir(parents=True)
+    file.write_text("result\n", encoding="utf-8")
+
+    def fail_stat(self, *, follow_symlinks=True):
+        if self == file:
+            raise OSError("stat denied")
+        return original_stat(self, follow_symlinks=follow_symlinks)
+
+    original_stat = Path.stat
+    monkeypatch.setattr(Path, "stat", fail_stat)
+
+    with pytest.raises(InventoryError, match="questions/q001/experiments/exp001/result.txt"):
+        inventory_module._regular_file_artifact(repo, file)
+
+
+def test_binary_sniff_and_hash_errors_are_inventory_errors(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    file = repo / "questions" / "q001" / "experiments" / "exp001" / "result.txt"
+    file.parent.mkdir(parents=True)
+    file.write_text("result\n", encoding="utf-8")
+
+    def fail_sniff(path, *, sniff_size=inventory_module.BINARY_SNIFF_BYTES):
+        raise OSError("read denied")
+
+    monkeypatch.setattr(inventory_module, "_is_binary", fail_sniff)
+    with pytest.raises(
+        InventoryError,
+        match="could not classify artifact kind: questions/q001/experiments/exp001/result.txt",
+    ):
+        inventory_module._regular_file_artifact(repo, file)
+
+    monkeypatch.setattr(inventory_module, "_is_binary", lambda path: False)
+    monkeypatch.setattr(
+        inventory_module, "sha256_file", lambda path: (_ for _ in ()).throw(OSError("hash denied"))
+    )
+    with pytest.raises(
+        InventoryError,
+        match="could not hash artifact: questions/q001/experiments/exp001/result.txt",
+    ):
+        inventory_module._regular_file_artifact(repo, file)
+
+
+def test_symlink_read_errors_are_inventory_errors(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    link = repo / "questions" / "q001" / "experiments" / "exp001" / "result.txt"
+    link.parent.mkdir(parents=True)
+    link.symlink_to("target.txt")
+
+    monkeypatch.setattr(
+        inventory_module.os,
+        "readlink",
+        lambda path: (_ for _ in ()).throw(OSError("readlink denied")),
+    )
+
+    with pytest.raises(
+        InventoryError,
+        match="could not read symlink target: questions/q001/experiments/exp001/result.txt",
+    ):
+        inventory_module._symlink_artifact(repo, link)
+
+
+def test_inventory_cli_reports_unreadable_artifact_as_deterministic_failure(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    locked = (
+        repo / "questions" / "q001-throughput" / "experiments" / "exp001-completed" / "locked.txt"
+    )
+    locked.write_text("locked\n", encoding="utf-8")
+    locked.chmod(0)
+    try:
+        try:
+            locked.read_bytes()
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("current user can still read chmod-000 files")
+
+        _discover(repo)
+        result = _inventory(repo)
+    finally:
+        locked.chmod(0o600)
+
+    assert result.returncode == 2
+    assert "questions/q001-throughput/experiments/exp001-completed/locked.txt" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_inventory_fingerprint_detects_file_additions_deletions_type_and_content_changes(tmp_path):
     repo = copy_fixture_repo(tmp_path)
-    experiment = (
-        repo
-        / "questions"
-        / "q001-throughput"
-        / "experiments"
-        / "exp001-completed"
-    )
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp001-completed"
     marker = experiment / "fingerprint.txt"
     marker.write_text("one\n", encoding="utf-8")
     _discover(repo)

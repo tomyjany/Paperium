@@ -9,6 +9,7 @@ from typing import Any
 from jsonschema import ValidationError
 
 from paperctl._support.fingerprints import (
+    FingerprintError,
     PrerequisiteArtifact,
     SourceFile,
     build_stage_fingerprint,
@@ -23,6 +24,7 @@ from paperctl.discovery import _build_manifest
 
 INVENTORY_SCHEMA_VERSION = 1
 INVENTORY_STAGE_VERSION = 1
+BINARY_SNIFF_BYTES = 64 * 1024
 MANIFEST_PATH_TEMPLATE = "{work_directory}/manifest.json"
 EXCLUDED_NAMES = {
     ".git",
@@ -129,23 +131,31 @@ def inventory_one(
         raise InventoryError(f"manifest experiment path is not a directory: {experiment_path}")
 
     artifacts = _inventory_artifacts(repo, experiment_dir)
+    try:
+        fingerprint = _inventory_fingerprint(
+            repo=repo,
+            config=config,
+            manifest_path=manifest_path,
+            artifacts=artifacts,
+        )
+    except (FingerprintError, OSError) as exc:
+        raise InventoryError(
+            f"could not fingerprint inventory for {experiment_path}: {exc}"
+        ) from exc
     inventory = {
         "schema_version": INVENTORY_SCHEMA_VERSION,
         "artifact_type": "artifact_inventory",
         "question_path": manifest_entry["question_path"],
         "experiment_path": experiment_path,
-        "fingerprint": _inventory_fingerprint(
-            repo=repo,
-            config=config,
-            manifest_path=manifest_path,
-            artifacts=artifacts,
-        ),
+        "fingerprint": fingerprint,
         "artifacts": artifacts,
     }
     try:
         validate_artifact("artifact-inventory.schema.json", inventory)
     except ValidationError as exc:
-        raise InventoryError(f"invalid generated inventory for {experiment_path}: {exc.message}") from exc
+        raise InventoryError(
+            f"invalid generated inventory for {experiment_path}: {exc.message}"
+        ) from exc
 
     inventory_path = manifest_entry["inventory_path"]
     output_path = _resolve_manifest_path(repo, inventory_path)
@@ -172,26 +182,44 @@ def _inventory_artifacts(repo: Path, experiment_dir: Path) -> list[dict[str, Any
             if entry.name in EXCLUDED_NAMES:
                 continue
             path = Path(entry.path)
-            if entry.is_symlink():
+            try:
+                is_symlink = entry.is_symlink()
+                is_dir = entry.is_dir(follow_symlinks=False)
+                is_file = entry.is_file(follow_symlinks=False)
+            except OSError as exc:
+                relative = _repo_relative_path(repo, path)
+                raise InventoryError(f"could not inspect artifact: {relative}: {exc}") from exc
+            if is_symlink:
                 artifacts.append(_symlink_artifact(repo, path))
                 continue
-            if entry.is_dir(follow_symlinks=False):
+            if is_dir:
                 pending.append(path)
                 continue
-            if entry.is_file(follow_symlinks=False):
+            if is_file:
                 artifacts.append(_regular_file_artifact(repo, path))
 
     return sorted(artifacts, key=lambda artifact: posix_path_sort_key(artifact["path"]))
 
 
 def _regular_file_artifact(repo: Path, path: Path) -> dict[str, Any]:
-    relative_path = path.relative_to(repo).as_posix()
-    kind = _kind_for_regular_file(path)
+    relative_path = _repo_relative_path(repo, path)
+    try:
+        kind = _kind_for_regular_file(path)
+    except OSError as exc:
+        raise InventoryError(f"could not classify artifact kind: {relative_path}: {exc}") from exc
+    try:
+        byte_size = path.stat().st_size
+    except OSError as exc:
+        raise InventoryError(f"could not stat artifact: {relative_path}: {exc}") from exc
+    try:
+        artifact_hash = sha256_file(path)
+    except OSError as exc:
+        raise InventoryError(f"could not hash artifact: {relative_path}: {exc}") from exc
     return {
         "path": relative_path,
         "file_type": "regular",
-        "byte_size": path.stat().st_size,
-        "sha256": sha256_file(path),
+        "byte_size": byte_size,
+        "sha256": artifact_hash,
         "kind": kind,
         "support_status": "supported" if kind != "binary" and kind != "unknown" else "unsupported",
         "symlink_target": None,
@@ -199,7 +227,11 @@ def _regular_file_artifact(repo: Path, path: Path) -> dict[str, Any]:
 
 
 def _symlink_artifact(repo: Path, path: Path) -> dict[str, Any]:
-    relative_path = path.relative_to(repo).as_posix()
+    relative_path = _repo_relative_path(repo, path)
+    try:
+        symlink_target = os.readlink(path)
+    except OSError as exc:
+        raise InventoryError(f"could not read symlink target: {relative_path}: {exc}") from exc
     return {
         "path": relative_path,
         "file_type": "symlink",
@@ -207,7 +239,7 @@ def _symlink_artifact(repo: Path, path: Path) -> dict[str, Any]:
         "sha256": None,
         "kind": _kind_from_extension(path),
         "support_status": "unsupported",
-        "symlink_target": os.readlink(path),
+        "symlink_target": symlink_target,
     }
 
 
@@ -221,12 +253,26 @@ def _kind_from_extension(path: Path) -> str:
     return EXTENSION_KIND_MAP.get(path.suffix.lower(), "unknown")
 
 
-def _is_binary(path: Path) -> bool:
+def _is_binary(path: Path, *, sniff_size: int = BINARY_SNIFF_BYTES) -> bool:
     try:
-        path.read_text(encoding="utf-8")
+        with path.open("rb") as handle:
+            sample = handle.read(sniff_size)
+    except UnicodeDecodeError:
+        return True
+    if b"\0" in sample:
+        return True
+    try:
+        sample.decode("utf-8")
     except UnicodeDecodeError:
         return True
     return False
+
+
+def _repo_relative_path(repo: Path, path: Path) -> str:
+    try:
+        return path.relative_to(repo).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _inventory_fingerprint(
@@ -296,7 +342,9 @@ def _write_inventory(output_path: Path, inventory: dict[str, Any], *, force: boo
             if output_path.read_bytes() == new_bytes:
                 return "unchanged"
         except OSError as exc:
-            raise InventoryError(f"could not read existing inventory: {output_path}: {exc}") from exc
+            raise InventoryError(
+                f"could not read existing inventory: {output_path}: {exc}"
+            ) from exc
     status = "replaced" if output_path.exists() else "created"
     try:
         write_json_atomic(output_path, inventory)
