@@ -1,0 +1,427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperctl.local/schemas/analysis-state.schema.json",
+  "title": "paperctl analysis state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "status",
+    "question_path",
+    "experiment_path",
+    "analysis_path",
+    "fingerprint",
+    "backend",
+    "diagnostics",
+    "analysis",
+    "raw_output_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_type": { "const": "analysis_state" },
+    "status": { "enum": ["accepted", "failed"] },
+    "question_path": { "$ref": "#/$defs/relative_path" },
+    "experiment_path": { "$ref": "#/$defs/relative_path" },
+    "analysis_path": { "$ref": "#/$defs/relative_path" },
+    "fingerprint": { "$ref": "#/$defs/stage_fingerprint" },
+    "backend": { "$ref": "#/$defs/backend" },
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "analysis": {
+      "anyOf": [
+        { "$ref": "#/$defs/experiment_analysis" },
+        { "type": "null" }
+      ]
+    },
+    "raw_output_sha256": { "$ref": "#/$defs/nullable_hash" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "accepted" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "diagnostics": { "type": "array", "maxItems": 0 },
+          "analysis": { "$ref": "#/$defs/experiment_analysis" },
+          "raw_output_sha256": { "$ref": "#/$defs/hash" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": { "$ref": "#/$defs/diagnostic" }
+          },
+          "analysis": { "type": "null" },
+          "raw_output_sha256": { "$ref": "#/$defs/nullable_hash" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullable_hash": {
+      "anyOf": [
+        { "$ref": "#/$defs/hash" },
+        { "type": "null" }
+      ]
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "json_pointer": {
+      "type": "string",
+      "maxLength": 1000,
+      "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
+    },
+    "nullable_relative_path": {
+      "anyOf": [
+        { "$ref": "#/$defs/relative_path" },
+        { "type": "null" }
+      ]
+    },
+    "nullable_json_pointer": {
+      "anyOf": [
+        { "$ref": "#/$defs/json_pointer" },
+        { "type": "null" }
+      ]
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "source_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "prerequisite_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "schema_name", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "schema_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "stage_fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "schema_version",
+        "config_sha256",
+        "source_files",
+        "source_files_sha256",
+        "prerequisite_artifacts",
+        "prerequisite_artifacts_sha256",
+        "extra_inputs",
+        "extra_inputs_sha256",
+        "fingerprint_sha256"
+      ],
+      "properties": {
+        "stage": { "$ref": "#/$defs/stage" },
+        "schema_version": { "const": 1 },
+        "config_sha256": { "$ref": "#/$defs/hash" },
+        "source_files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source_file" }
+        },
+        "source_files_sha256": { "$ref": "#/$defs/hash" },
+        "prerequisite_artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/prerequisite_artifact" }
+        },
+        "prerequisite_artifacts_sha256": { "$ref": "#/$defs/hash" },
+        "extra_inputs": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "extra_inputs_sha256": { "$ref": "#/$defs/hash" },
+        "fingerprint_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "return_code", "stdout_preview", "stderr_preview"],
+      "properties": {
+        "name": { "enum": ["fake", "codex-exec"] },
+        "status": { "enum": ["completed", "failed", "timed_out"] },
+        "return_code": {
+          "anyOf": [
+            { "type": "integer" },
+            { "type": "null" }
+          ]
+        },
+        "stdout_preview": {
+          "anyOf": [
+            { "type": "string", "maxLength": 4000 },
+            { "type": "null" }
+          ]
+        },
+        "stderr_preview": {
+          "anyOf": [
+            { "type": "string", "maxLength": 4000 },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,79}$"
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "path": { "$ref": "#/$defs/nullable_relative_path" },
+        "selector": { "$ref": "#/$defs/nullable_json_pointer" },
+        "detail": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "experiment_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_type",
+        "question_path",
+        "experiment_path",
+        "title",
+        "execution_status",
+        "hypothesis_verdict",
+        "objective",
+        "answer",
+        "meaning",
+        "limitations",
+        "confidence",
+        "claims"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "artifact_type": { "const": "experiment_analysis" },
+        "question_path": { "$ref": "#/$defs/relative_path" },
+        "experiment_path": { "$ref": "#/$defs/relative_path" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "execution_status": { "enum": ["completed", "failed", "incomplete", "unknown"] },
+        "hypothesis_verdict": {
+          "enum": [
+            "supported",
+            "partially_supported",
+            "not_supported",
+            "inconclusive",
+            "not_applicable"
+          ]
+        },
+        "objective": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "answer": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "meaning": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "limitations": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "claims": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/claim" }
+        }
+      }
+    },
+    "claim_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "unit": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 80 },
+        { "type": "null" }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "source_hash", "selector_type", "selector"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "source_hash": { "$ref": "#/$defs/hash" },
+        "selector_type": { "const": "json_pointer" },
+        "selector": { "$ref": "#/$defs/json_pointer" }
+      }
+    },
+    "scalar": {
+      "anyOf": [
+        { "type": "string", "maxLength": 2000 },
+        { "type": "number" },
+        { "type": "integer" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "value_type": { "enum": ["string", "number", "integer", "boolean", "null"] },
+    "typed_value": {
+      "allOf": [
+        {
+          "if": {
+            "properties": { "value_type": { "const": "string" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "string", "maxLength": 2000 } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "number" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "number" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "integer" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "integer" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "boolean" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "boolean" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "null" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "null" } } }
+        }
+      ]
+    },
+    "numeric_value_type": { "enum": ["number", "integer"] },
+    "typed_numeric_value": {
+      "allOf": [
+        {
+          "if": {
+            "properties": { "value_type": { "const": "number" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "number" } } }
+        },
+        {
+          "if": {
+            "properties": { "value_type": { "const": "integer" } },
+            "required": ["value_type"]
+          },
+          "then": { "properties": { "value": { "type": "integer" } } }
+        }
+      ]
+    },
+    "measured_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "claim_type",
+        "label",
+        "value",
+        "value_type",
+        "unit",
+        "source"
+      ],
+      "properties": {
+        "claim_id": { "$ref": "#/$defs/claim_id" },
+        "claim_type": { "const": "measured_value" },
+        "label": { "$ref": "#/$defs/label" },
+        "value": { "$ref": "#/$defs/scalar" },
+        "value_type": { "$ref": "#/$defs/value_type" },
+        "unit": { "$ref": "#/$defs/unit" },
+        "source": { "$ref": "#/$defs/source" }
+      },
+      "allOf": [{ "$ref": "#/$defs/typed_value" }]
+    },
+    "derived_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "claim_type",
+        "label",
+        "value",
+        "value_type",
+        "unit",
+        "formula",
+        "input_claim_ids"
+      ],
+      "properties": {
+        "claim_id": { "$ref": "#/$defs/claim_id" },
+        "claim_type": { "const": "derived_value" },
+        "label": { "$ref": "#/$defs/label" },
+        "value": { "type": "number" },
+        "value_type": { "$ref": "#/$defs/numeric_value_type" },
+        "unit": { "$ref": "#/$defs/unit" },
+        "formula": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "^[\\u0000-\\u007f]+$"
+        },
+        "input_claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/claim_id" }
+        }
+      },
+      "allOf": [{ "$ref": "#/$defs/typed_numeric_value" }]
+    },
+    "claim": {
+      "oneOf": [
+        { "$ref": "#/$defs/measured_claim" },
+        { "$ref": "#/$defs/derived_claim" }
+      ]
+    }
+  }
+}

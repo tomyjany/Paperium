@@ -220,6 +220,94 @@ def _experiment_analysis(**overrides):
     return analysis
 
 
+def _analysis_fingerprint(**overrides):
+    fingerprint = {
+        "stage": {"name": "analysis", "version": 1},
+        "schema_version": 1,
+        "config_sha256": "sha256:" + "a" * 64,
+        "source_files": [
+            {
+                "path": "questions/q001-throughput/experiments/exp001-completed/README.md",
+                "sha256": "sha256:" + "b" * 64,
+            }
+        ],
+        "source_files_sha256": "sha256:" + "c" * 64,
+        "prerequisite_artifacts": [
+            {
+                "path": (
+                    "paper/work/evidence/questions/q001-throughput/experiments/"
+                    "exp001-completed.json"
+                ),
+                "schema_name": "evidence-packet.schema.json",
+                "sha256": "sha256:" + "d" * 64,
+            }
+        ],
+        "prerequisite_artifacts_sha256": "sha256:" + "e" * 64,
+        "extra_inputs": {},
+        "extra_inputs_sha256": "sha256:" + "f" * 64,
+        "fingerprint_sha256": "sha256:" + "1" * 64,
+    }
+    fingerprint.update(overrides)
+    return fingerprint
+
+
+def _analysis_backend(**overrides):
+    backend = {
+        "name": "fake",
+        "status": "completed",
+        "return_code": 0,
+        "stdout_preview": "analysis ok",
+        "stderr_preview": None,
+    }
+    backend.update(overrides)
+    return backend
+
+
+def _analysis_diagnostic(**overrides):
+    diagnostic = {
+        "code": "backend_failed",
+        "message": "The backend did not produce valid experiment analysis.",
+        "path": "questions/q001-throughput/experiments/exp001-completed/README.md",
+        "selector": "/analysis",
+        "detail": {"backend_status": "failed"},
+    }
+    diagnostic.update(overrides)
+    return diagnostic
+
+
+def _analysis_state(**overrides):
+    state = {
+        "schema_version": 1,
+        "artifact_type": "analysis_state",
+        "status": "accepted",
+        "question_path": "questions/q001-throughput",
+        "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+        "analysis_path": (
+            "paper/work/analysis/questions/q001-throughput/experiments/"
+            "exp001-completed.json"
+        ),
+        "fingerprint": _analysis_fingerprint(),
+        "backend": _analysis_backend(),
+        "diagnostics": [],
+        "analysis": _experiment_analysis(),
+        "raw_output_sha256": "sha256:" + "2" * 64,
+    }
+    state.update(overrides)
+    return state
+
+
+def _failed_analysis_state(**overrides):
+    state = _analysis_state(
+        status="failed",
+        backend=_analysis_backend(status="failed", return_code=1, stderr_preview="invalid json"),
+        diagnostics=[_analysis_diagnostic()],
+        analysis=None,
+        raw_output_sha256=None,
+    )
+    state.update(overrides)
+    return state
+
+
 def _derived_claim(**overrides):
     claim = {
         "claim_id": "throughput_percent",
@@ -249,6 +337,7 @@ def test_packaged_schemas_load_through_importlib_resources():
         "paper-audit.schema.json",
         "experiment-report.schema.json",
         "experiment-analysis.schema.json",
+        "analysis-state.schema.json",
     }
 
     available_names = {
@@ -272,6 +361,7 @@ def test_packaged_schemas_are_valid_json_schemas():
         "paper-audit.schema.json",
         "experiment-report.schema.json",
         "experiment-analysis.schema.json",
+        "analysis-state.schema.json",
     ]:
         Draft202012Validator.check_schema(load_schema(name))
 
@@ -467,6 +557,271 @@ def test_experiment_analysis_schema_rejects_derived_claim_with_empty_inputs():
 
     with pytest.raises(ValidationError):
         validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize("state", [_analysis_state(), _failed_analysis_state()])
+def test_analysis_state_schema_accepts_valid_states(state):
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema_version",
+        "artifact_type",
+        "status",
+        "question_path",
+        "experiment_path",
+        "analysis_path",
+        "fingerprint",
+        "backend",
+        "diagnostics",
+        "analysis",
+        "raw_output_sha256",
+    ],
+)
+@pytest.mark.parametrize("state_builder", [_analysis_state, _failed_analysis_state])
+def test_analysis_state_schema_requires_generated_state_fields(field, state_builder):
+    from paperctl._support.schema import validate_artifact
+
+    state = state_builder()
+    del state[field]
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize("field", ["question_path", "experiment_path", "analysis_path"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/absolute/path",
+        "../escape",
+        "questions/q001-throughput/../escape",
+        "questions\\q001-throughput",
+        "C:\\repo\\questions\\q001-throughput",
+    ],
+)
+def test_analysis_state_paths_must_be_posix_repo_relative(field, path):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state(**{field: path})
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
+def test_analysis_state_schema_requires_stage_fingerprint_contract():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("analysis-state.schema.json", _analysis_state())
+
+    for key in [
+        "stage",
+        "schema_version",
+        "config_sha256",
+        "source_files",
+        "source_files_sha256",
+        "prerequisite_artifacts",
+        "prerequisite_artifacts_sha256",
+        "extra_inputs",
+        "extra_inputs_sha256",
+        "fingerprint_sha256",
+    ]:
+        state = _analysis_state()
+        del state["fingerprint"][key]
+        with pytest.raises(ValidationError):
+            validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda state: state.update(raw_output_sha256="sha256:" + "z" * 64),
+        lambda state: state["fingerprint"].update(config_sha256="not-a-hash"),
+        lambda state: state["fingerprint"]["source_files"][0].update(
+            sha256="sha256:" + "g" * 64
+        ),
+        lambda state: state["fingerprint"].update(source_files_sha256="sha256:" + "G" * 64),
+        lambda state: state["fingerprint"]["prerequisite_artifacts"][0].update(
+            sha256="sha256:" + "x" * 63
+        ),
+        lambda state: state["fingerprint"].update(
+            prerequisite_artifacts_sha256="sha256:" + "x" * 65
+        ),
+        lambda state: state["fingerprint"].update(extra_inputs_sha256="sha256:abc"),
+        lambda state: state["fingerprint"].update(fingerprint_sha256="abc"),
+    ],
+)
+def test_analysis_state_schema_rejects_malformed_hashes(mutation):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state()
+    mutation(state)
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda state: state.update(status="failed"),
+        lambda state: state.update(analysis=None),
+        lambda state: state.update(diagnostics=[_analysis_diagnostic()]),
+        lambda state: state.update(raw_output_sha256=None),
+    ],
+)
+def test_analysis_state_accepted_state_requires_analysis_empty_diagnostics_and_raw_output(
+    mutation,
+):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state()
+    mutation(state)
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda state: state.update(status="accepted"),
+        lambda state: state.update(analysis=_experiment_analysis()),
+        lambda state: state.update(diagnostics=[]),
+    ],
+)
+def test_analysis_state_failed_state_requires_null_analysis_and_non_empty_diagnostics(
+    mutation,
+):
+    from paperctl._support.schema import validate_artifact
+
+    state = _failed_analysis_state()
+    mutation(state)
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+    state = _failed_analysis_state(raw_output_sha256="sha256:" + "3" * 64)
+    validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize("name", ["fake", "codex-exec"])
+@pytest.mark.parametrize("status", ["completed", "failed", "timed_out"])
+@pytest.mark.parametrize("return_code", [0, 1, None])
+def test_analysis_state_backend_metadata_accepts_known_values(name, status, return_code):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state(
+        backend=_analysis_backend(name=name, status=status, return_code=return_code)
+    )
+
+    validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        _analysis_backend(name="local"),
+        _analysis_backend(status="running"),
+        _analysis_backend(return_code="1"),
+        _analysis_backend(stdout_preview="\U0001f642" * 4001),
+        _analysis_backend(stderr_preview="\U0001f642" * 4001),
+    ],
+)
+def test_analysis_state_schema_rejects_invalid_backend_metadata(backend):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state(backend=backend)
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
+def test_analysis_state_failed_diagnostics_are_capped():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact(
+        "analysis-state.schema.json",
+        _failed_analysis_state(diagnostics=[_analysis_diagnostic()] * 20),
+    )
+
+    with pytest.raises(ValidationError):
+        validate_artifact(
+            "analysis-state.schema.json",
+            _failed_analysis_state(diagnostics=[_analysis_diagnostic()] * 21),
+        )
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        _analysis_diagnostic(code="BadCode"),
+        _analysis_diagnostic(code="bad-code"),
+        _analysis_diagnostic(code="a" * 81),
+        _analysis_diagnostic(message="x" * 1001),
+        _analysis_diagnostic(path="/absolute/result.json"),
+        _analysis_diagnostic(path="../result.json"),
+        _analysis_diagnostic(path="questions\\q001\\result.json"),
+        _analysis_diagnostic(selector="canonical_facts/0/value"),
+        _analysis_diagnostic(selector="/bad~2escape"),
+    ],
+)
+def test_analysis_state_schema_rejects_invalid_diagnostics(diagnostic):
+    from paperctl._support.schema import validate_artifact
+
+    state = _failed_analysis_state(diagnostics=[diagnostic])
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
+def test_analysis_state_diagnostic_path_and_selector_can_be_null():
+    from paperctl._support.schema import validate_artifact
+
+    state = _failed_analysis_state(
+        diagnostics=[_analysis_diagnostic(path=None, selector=None, detail={"nested": [1]})]
+    )
+
+    validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize(
+    ("state_builder", "mutation"),
+    [
+        (_failed_analysis_state, lambda state: state.update(unexpected=True)),
+        (_failed_analysis_state, lambda state: state["fingerprint"].update(unexpected=True)),
+        (
+            _failed_analysis_state,
+            lambda state: state["fingerprint"]["stage"].update(unexpected=True),
+        ),
+        (
+            _failed_analysis_state,
+            lambda state: state["fingerprint"]["source_files"][0].update(unexpected=True),
+        ),
+        (
+            _failed_analysis_state,
+            lambda state: state["fingerprint"]["prerequisite_artifacts"][0].update(
+                unexpected=True
+            ),
+        ),
+        (_failed_analysis_state, lambda state: state["backend"].update(unexpected=True)),
+        (_failed_analysis_state, lambda state: state["diagnostics"][0].update(unexpected=True)),
+        (_analysis_state, lambda state: state["analysis"].update(unexpected=True)),
+        (_analysis_state, lambda state: state["analysis"]["claims"][0].update(unexpected=True)),
+    ],
+)
+def test_analysis_state_schema_rejects_unknown_properties(state_builder, mutation):
+    from paperctl._support.schema import validate_artifact
+
+    state = state_builder()
+    mutation(state)
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
 
 
 def test_manifest_schema_excludes_status_and_disposition_fields():
