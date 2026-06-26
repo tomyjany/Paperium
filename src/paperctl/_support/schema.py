@@ -27,6 +27,14 @@ def validate_artifact(name: str, obj: Any) -> None:
 
 
 def validate_analysis_state_integrity(state: dict[str, Any]) -> None:
+    experiment_path = state.get("experiment_path")
+    expected_analysis_path = f"paper/work/analyses/{experiment_path}.json"
+    if state.get("analysis_path") != expected_analysis_path:
+        raise AnalysisStateIntegrityError(
+            "analysis_state analysis_path mismatch: "
+            f"expected {expected_analysis_path!r}, got {state.get('analysis_path')!r}"
+        )
+
     if state.get("status") != "accepted":
         return
 

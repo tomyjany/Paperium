@@ -799,7 +799,20 @@ def test_analysis_state_integrity_rejects_mismatched_accepted_state_paths(
         validate_analysis_state_integrity(state)
 
 
-def test_analysis_state_integrity_ignores_failed_state_without_analysis():
+@pytest.mark.parametrize("state_builder", [_analysis_state, _failed_analysis_state])
+def test_analysis_state_integrity_rejects_mismatched_analysis_path(state_builder):
+    from paperctl._support.schema import AnalysisStateIntegrityError
+    from paperctl._support.schema import validate_analysis_state_integrity
+
+    state = state_builder(
+        analysis_path="paper/work/analyses/questions/q999-other/experiments/exp999-other.json"
+    )
+
+    with pytest.raises(AnalysisStateIntegrityError, match="analysis_path"):
+        validate_analysis_state_integrity(state)
+
+
+def test_analysis_state_integrity_accepts_failed_state_without_analysis():
     from paperctl._support.schema import validate_analysis_state_integrity
 
     validate_analysis_state_integrity(_failed_analysis_state())
