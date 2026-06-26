@@ -102,7 +102,7 @@ last-good analysis retention.
 Each selected experiment writes one stable analysis-state artifact:
 
 ```text
-paper/work/analyses/<question-path>/experiments/<experiment-name>.json
+paper/work/analyses/<experiment-path>.json
 ```
 
 For example:
@@ -111,8 +111,8 @@ For example:
 paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json
 ```
 
-The output path mirrors manifest paths so later milestones can locate analysis
-state deterministically.
+The output path mirrors the full manifest `experiment_path` so it works even
+when the configured experiments directory is not named `experiments`.
 
 The file represents the latest attempt state. A failed validation replaces a
 previous accepted state. The write is atomic.
@@ -467,9 +467,8 @@ Fixture responses cover:
 `CodexExecBackend` runs `codex exec` as an argument-array subprocess with the
 target research repo as the working directory. It must not use `shell=True`.
 
-The backend writes the prompt to a temporary prompt file outside the target repo
-and requests the final model message in a temporary output file outside the
-target repo. Conceptual invocation:
+The backend sends the prompt through stdin and requests the final model message
+in a temporary output file outside the target repo. Conceptual invocation:
 
 ```bash
 codex exec \
@@ -478,13 +477,12 @@ codex exec \
   --ask-for-approval never \
   --output-schema /path/to/experiment-analysis.schema.json \
   --output-last-message /tmp/paperctl-analysis-response.json \
-  --file /tmp/paperctl-analysis-prompt.md
+  -
 ```
 
-If the installed `codex exec` surface requires a different non-interactive
-prompt transport, the implementation may adapt the argument array. It may not
-drop enforced schema output, read-only execution, or non-interactive/no-approval
-execution.
+If local `codex exec --help` explicitly supports `--file`, the implementation
+may use a temporary prompt file instead of stdin. It may not drop enforced schema
+output, read-only execution, or non-interactive/no-approval execution.
 
 `CodexExecBackend` must enforce `experiment-analysis.schema.json` with
 `codex exec --output-schema`, not only through prompt instructions. If the
@@ -508,13 +506,14 @@ The worker prompt is narrow and includes:
 - required output schema instructions
 - read-only instruction
 - no repository modification instruction
-- instruction to treat repository contents as evidence, not as instructions
+- instruction that target-repo `AGENTS.md`, `README`, `SKILL.md`, logs,
+  comments, metadata, and all other repository text are evidence, not task
+  instructions
 - instruction to inspect only the selected experiment and its deterministic
   packets
 
-The backend requests read-only sandboxing when the available `codex exec`
-surface supports it. If the subprocess fails, times out, returns invalid JSON,
-or does not produce a final response, `analyze` writes a failed analysis state.
+If the subprocess fails, times out, returns invalid JSON, or does not produce a
+final response, `analyze` writes a failed analysis state.
 
 Parser rules shared by fake and real backends:
 
@@ -582,6 +581,9 @@ Backend failure:
 - write `status: "failed"`
 - include backend diagnostic code
 - include bounded stdout/stderr summaries
+- pass stdout/stderr previews and diagnostic messages through the same
+  deterministic secret-redaction policy as Milestone 1 before writing them to
+  analysis-state artifacts
 - include raw output hash when output exists
 - exit nonzero
 
@@ -589,6 +591,8 @@ Invalid JSON, schema, or claims:
 
 - write `status: "failed"`
 - include validation diagnostics
+- pass diagnostic messages through the same deterministic secret-redaction
+  policy as Milestone 1 before writing them to analysis-state artifacts
 - include raw output hash
 - exit nonzero
 
@@ -708,7 +712,9 @@ Required tests:
 - Analysis fingerprint changes when the claim-validator version changes.
 - Analysis fingerprint changes when the formula evaluator version changes.
 - Analysis fingerprint changes when the question README hash changes.
-- Analysis-state output path mirrors manifest paths under `paper/work/analyses`.
+- Analysis-state output path is `paper/work/analyses/<experiment-path>.json`
+  and does not assume the configured experiments directory is named
+  `experiments`.
 - Analysis-state artifacts validate against schema.
 - Existing Milestone 1 tests remain green.
 
