@@ -1,3 +1,4 @@
+import copy
 import re
 
 import pytest
@@ -178,6 +179,62 @@ def _render_state():
     }
 
 
+def _experiment_analysis(**overrides):
+    analysis = {
+        "schema_version": 1,
+        "artifact_type": "experiment_analysis",
+        "question_path": "questions/q001-throughput",
+        "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+        "title": "Completed throughput run",
+        "execution_status": "completed",
+        "hypothesis_verdict": "supported",
+        "objective": "Evaluate throughput using claim throughput_pages_per_second.",
+        "answer": "The measured claim throughput_pages_per_second is available.",
+        "meaning": "The run has structured measured evidence.",
+        "limitations": ["No semantic synthesis is rendered in M2."],
+        "confidence": "medium",
+        "claims": [
+            {
+                "claim_id": "throughput_pages_per_second",
+                "claim_type": "measured_value",
+                "label": "Throughput",
+                "value": 42.5,
+                "value_type": "number",
+                "unit": "pages/s",
+                "source": {
+                    "path": (
+                        "questions/q001-throughput/experiments/exp001-completed/"
+                        "outputs/experiment_report.json"
+                    ),
+                    "source_hash": (
+                        "sha256:"
+                        "4bf7977e2379089b948891299acad85afb21056d02280f360549b1b4b7d86fdb"
+                    ),
+                    "selector_type": "json_pointer",
+                    "selector": "/canonical_facts/0/value",
+                },
+            }
+        ],
+    }
+    analysis.update(overrides)
+    return analysis
+
+
+def _derived_claim(**overrides):
+    claim = {
+        "claim_id": "throughput_percent",
+        "claim_type": "derived_value",
+        "label": "Throughput percent",
+        "value": 100,
+        "value_type": "integer",
+        "unit": "%",
+        "formula": "throughput_pages_per_second / throughput_pages_per_second * 100",
+        "input_claim_ids": ["throughput_pages_per_second"],
+    }
+    claim.update(overrides)
+    return claim
+
+
 def test_packaged_schemas_load_through_importlib_resources():
     from importlib import resources
 
@@ -191,6 +248,7 @@ def test_packaged_schemas_load_through_importlib_resources():
         "render-state.schema.json",
         "paper-audit.schema.json",
         "experiment-report.schema.json",
+        "experiment-analysis.schema.json",
     }
 
     available_names = {
@@ -213,8 +271,202 @@ def test_packaged_schemas_are_valid_json_schemas():
         "render-state.schema.json",
         "paper-audit.schema.json",
         "experiment-report.schema.json",
+        "experiment-analysis.schema.json",
     ]:
         Draft202012Validator.check_schema(load_schema(name))
+
+
+def test_experiment_analysis_schema_accepts_minimal_valid_analysis():
+    from paperctl._support.schema import validate_artifact
+
+    validate_artifact("experiment-analysis.schema.json", _experiment_analysis())
+
+
+@pytest.mark.parametrize("property_name", ["unexpected"])
+def test_experiment_analysis_schema_rejects_unknown_top_level_properties(property_name):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis(**{property_name: True})
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+def test_experiment_analysis_schema_rejects_unknown_nested_claim_and_source_properties():
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["unexpected"] = True
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["source"]["unexpected"] = True
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_status", "running"),
+        ("hypothesis_verdict", "proven"),
+        ("confidence", "certain"),
+    ],
+)
+def test_experiment_analysis_schema_rejects_unknown_enums(field, value):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis(**{field: value})
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize("field", ["question_path", "experiment_path"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/absolute/path",
+        "../escape",
+        "questions/q001-throughput/../escape",
+        "questions\\q001-throughput",
+        "C:\\repo\\questions\\q001-throughput",
+    ],
+)
+def test_experiment_analysis_paths_must_be_posix_repo_relative(field, path):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis(**{field: path})
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+def test_experiment_analysis_schema_rejects_bad_claim_id():
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["claim_id"] = "bad-id"
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize(
+    ("value", "value_type"),
+    [
+        ("42.5", "number"),
+        (42.5, "integer"),
+        (True, "string"),
+        ("not null", "null"),
+    ],
+)
+def test_experiment_analysis_measured_claim_value_must_match_value_type(value, value_type):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["value"] = value
+    analysis["claims"][0]["value_type"] = value_type
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (["title"], "x" * 161),
+        (["objective"], "x" * 1001),
+        (["answer"], "x" * 1501),
+        (["meaning"], "x" * 1501),
+        (["limitations", 0], "x" * 501),
+        (["claims", 0, "value"], "x" * 2001),
+        (["claims", 0, "label"], "x" * 161),
+        (["claims", 0, "unit"], "x" * 81),
+        (["claims", 1, "formula"], "x" * 301),
+        (["claims", 0, "source", "path"], "x" * 1001),
+        (["claims", 0, "source", "selector"], "/" + "x" * 1000),
+    ],
+)
+def test_experiment_analysis_schema_rejects_unbounded_strings(path, value):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis(claims=[_experiment_analysis()["claims"][0], _derived_claim()])
+    target = analysis
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/absolute/result.json",
+        "../result.json",
+        "questions/q001-throughput/experiments/exp001-completed/../result.json",
+        "questions\\q001-throughput\\experiments\\exp001-completed\\outputs\\result.json",
+        "C:\\repo\\questions\\q001-throughput\\result.json",
+    ],
+)
+def test_experiment_analysis_measured_source_path_must_be_posix_repo_relative(path):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["source"]["path"] = path
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+def test_experiment_analysis_schema_rejects_too_many_limitations_and_claims():
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis(limitations=["limitation"] * 11)
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+    analysis = _experiment_analysis()
+    base_claim = analysis["claims"][0]
+    analysis["claims"] = [
+        {**copy.deepcopy(base_claim), "claim_id": f"claim_{index}"} for index in range(51)
+    ]
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+def test_experiment_analysis_schema_rejects_malformed_source_hash():
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["source"]["source_hash"] = "sha256:" + "z" * 64
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+@pytest.mark.parametrize("selector", ["/bad~2escape", "canonical_facts/0/value"])
+def test_experiment_analysis_schema_rejects_invalid_json_pointer_source_selectors(selector):
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis()
+    analysis["claims"][0]["source"]["selector"] = selector
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
+
+
+def test_experiment_analysis_schema_rejects_derived_claim_with_empty_inputs():
+    from paperctl._support.schema import validate_artifact
+
+    analysis = _experiment_analysis(claims=[_experiment_analysis()["claims"][0], _derived_claim()])
+    analysis["claims"][1]["input_claim_ids"] = []
+
+    with pytest.raises(ValidationError):
+        validate_artifact("experiment-analysis.schema.json", analysis)
 
 
 def test_manifest_schema_excludes_status_and_disposition_fields():

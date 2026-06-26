@@ -1,0 +1,224 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://paperctl.local/schemas/experiment-analysis.schema.json",
+    "title": "paperctl experiment analysis",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_version",
+        "artifact_type",
+        "question_path",
+        "experiment_path",
+        "title",
+        "execution_status",
+        "hypothesis_verdict",
+        "objective",
+        "answer",
+        "meaning",
+        "limitations",
+        "confidence",
+        "claims"
+    ],
+    "properties": {
+        "schema_version": {"const": 1},
+        "artifact_type": {"const": "experiment_analysis"},
+        "question_path": {"$ref": "#/$defs/relative_path"},
+        "experiment_path": {"$ref": "#/$defs/relative_path"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 160},
+        "execution_status": {"enum": ["completed", "failed", "incomplete", "unknown"]},
+        "hypothesis_verdict": {
+            "enum": [
+                "supported",
+                "partially_supported",
+                "not_supported",
+                "inconclusive",
+                "not_applicable"
+            ]
+        },
+        "objective": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "answer": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "meaning": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "limitations": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "claims": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {"$ref": "#/$defs/claim"}
+        }
+    },
+    "$defs": {
+        "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "claim_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "label": {"type": "string", "minLength": 1, "maxLength": 160},
+        "unit": {
+            "anyOf": [
+                {"type": "string", "minLength": 1, "maxLength": 80},
+                {"type": "null"}
+            ]
+        },
+        "json_pointer": {
+            "type": "string",
+            "maxLength": 1000,
+            "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
+        },
+        "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "source_hash", "selector_type", "selector"],
+            "properties": {
+                "path": {"$ref": "#/$defs/relative_path"},
+                "source_hash": {"$ref": "#/$defs/hash"},
+                "selector_type": {"const": "json_pointer"},
+                "selector": {"$ref": "#/$defs/json_pointer"}
+            }
+        },
+        "scalar": {
+            "anyOf": [
+                {"type": "string", "maxLength": 2000},
+                {"type": "number"},
+                {"type": "integer"},
+                {"type": "boolean"},
+                {"type": "null"}
+            ]
+        },
+        "value_type": {"enum": ["string", "number", "integer", "boolean", "null"]},
+        "typed_value": {
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "string"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "string", "maxLength": 2000}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "number"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "number"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "integer"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "integer"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "boolean"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "boolean"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "null"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "null"}}}
+                }
+            ]
+        },
+        "numeric_value_type": {"enum": ["number", "integer"]},
+        "typed_numeric_value": {
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "number"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "number"}}}
+                },
+                {
+                    "if": {
+                        "properties": {"value_type": {"const": "integer"}},
+                        "required": ["value_type"]
+                    },
+                    "then": {"properties": {"value": {"type": "integer"}}}
+                }
+            ]
+        },
+        "measured_claim": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "claim_id",
+                "claim_type",
+                "label",
+                "value",
+                "value_type",
+                "unit",
+                "source"
+            ],
+            "properties": {
+                "claim_id": {"$ref": "#/$defs/claim_id"},
+                "claim_type": {"const": "measured_value"},
+                "label": {"$ref": "#/$defs/label"},
+                "value": {"$ref": "#/$defs/scalar"},
+                "value_type": {"$ref": "#/$defs/value_type"},
+                "unit": {"$ref": "#/$defs/unit"},
+                "source": {"$ref": "#/$defs/source"}
+            },
+            "allOf": [{"$ref": "#/$defs/typed_value"}]
+        },
+        "derived_claim": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "claim_id",
+                "claim_type",
+                "label",
+                "value",
+                "value_type",
+                "unit",
+                "formula",
+                "input_claim_ids"
+            ],
+            "properties": {
+                "claim_id": {"$ref": "#/$defs/claim_id"},
+                "claim_type": {"const": "derived_value"},
+                "label": {"$ref": "#/$defs/label"},
+                "value": {"type": "number"},
+                "value_type": {"$ref": "#/$defs/numeric_value_type"},
+                "unit": {"$ref": "#/$defs/unit"},
+                "formula": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300,
+                    "pattern": "^[\\u0000-\\u007f]+$"
+                },
+                "input_claim_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "uniqueItems": true,
+                    "items": {"$ref": "#/$defs/claim_id"}
+                }
+            },
+            "allOf": [{"$ref": "#/$defs/typed_numeric_value"}]
+        },
+        "claim": {
+            "oneOf": [
+                {"$ref": "#/$defs/measured_claim"},
+                {"$ref": "#/$defs/derived_claim"}
+            ]
+        }
+    }
+}
