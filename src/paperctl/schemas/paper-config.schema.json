@@ -4,7 +4,7 @@
   "title": "paperctl configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "questions", "paper", "evidence", "audit"],
+  "required": ["schema_version", "questions", "paper", "inventory", "evidence", "audit"],
   "properties": {
     "schema_version": { "const": 1 },
     "questions": {
@@ -26,6 +26,18 @@
         "draft_output": { "$ref": "#/$defs/relative_path" },
         "final_output": { "$ref": "#/$defs/relative_path" },
         "audit_report": { "$ref": "#/$defs/relative_path" }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exclude_names"],
+      "properties": {
+        "exclude_names": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/path_name" },
+          "uniqueItems": true
+        }
       }
     },
     "evidence": {
@@ -81,6 +93,11 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "path_name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\.\\.?$)(?!.*[/\\\\]).+$"
     },
     "json_pointer": {
       "type": "string",

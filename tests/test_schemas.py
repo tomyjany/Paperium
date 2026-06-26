@@ -88,6 +88,21 @@ def _paper_config(selector="/metrics/pages_per_second"):
             "final_output": "PAPER.md",
             "audit_report": "paper/PAPER.audit.json",
         },
+        "inventory": {
+            "exclude_names": [
+                ".git",
+                ".hg",
+                ".svn",
+                "__pycache__",
+                ".pytest_cache",
+                ".mypy_cache",
+                ".ruff_cache",
+                ".DS_Store",
+                ".venv",
+                ".uv-cache",
+                "node_modules",
+            ],
+        },
         "evidence": {
             "default_canonical_artifacts": ["outputs/experiment_report.json"],
             "canonical_facts": {
@@ -434,6 +449,11 @@ def test_inventory_regular_files_require_byte_size_and_sha256():
         "artifact_type": "artifact_inventory",
         "question_path": "questions/q001-throughput",
         "experiment_path": "questions/q001-throughput/experiments/exp001-baseline",
+        "counts": {
+            "artifact_count": 1,
+            "excluded_artifact_count": 0,
+        },
+        "excluded_artifacts": [],
         "artifacts": [
             {
                 "path": "questions/q001-throughput/experiments/exp001-baseline/outputs/result.json",

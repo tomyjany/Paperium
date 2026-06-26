@@ -82,6 +82,21 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "final_output": "PAPER.md",
         "audit_report": "paper/PAPER.audit.json",
     },
+    "inventory": {
+        "exclude_names": [
+            ".git",
+            ".hg",
+            ".svn",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".DS_Store",
+            ".venv",
+            ".uv-cache",
+            "node_modules",
+        ],
+    },
     "evidence": {
         "default_canonical_artifacts": ["outputs/experiment_report.json"],
         "canonical_facts": {},

@@ -177,12 +177,13 @@ def _expected_inventory(
             raise InventoryError(f"manifest experiment path is a symlink: {experiment_path}")
         if not experiment_dir.is_dir():
             raise InventoryError(f"manifest experiment path is not a directory: {experiment_path}")
-        artifacts = _inventory_artifacts(repo, experiment_dir)
+        artifacts, excluded_artifacts = _inventory_artifacts(repo, experiment_dir, config)
         fingerprint = _inventory_fingerprint(
             repo=repo,
             config=config,
             manifest_path=manifest_path,
             artifacts=artifacts,
+            excluded_artifacts=excluded_artifacts,
         )
     except (InventoryError, FingerprintError, OSError) as exc:
         raise NormalizeError(
@@ -194,6 +195,11 @@ def _expected_inventory(
         "question_path": manifest_entry["question_path"],
         "experiment_path": experiment_path,
         "fingerprint": fingerprint,
+        "counts": {
+            "artifact_count": len(artifacts),
+            "excluded_artifact_count": len(excluded_artifacts),
+        },
+        "excluded_artifacts": excluded_artifacts,
         "artifacts": artifacts,
     }
 

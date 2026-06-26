@@ -9,6 +9,8 @@
     "artifact_type",
     "question_path",
     "experiment_path",
+    "counts",
+    "excluded_artifacts",
     "artifacts"
   ],
   "properties": {
@@ -17,6 +19,19 @@
     "question_path": { "$ref": "#/$defs/relative_path" },
     "experiment_path": { "$ref": "#/$defs/relative_path" },
     "fingerprint": { "type": "object" },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_count", "excluded_artifact_count"],
+      "properties": {
+        "artifact_count": { "type": "integer", "minimum": 0 },
+        "excluded_artifact_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "excluded_artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/excluded_artifact" }
+    },
     "artifacts": {
       "type": "array",
       "items": { "$ref": "#/$defs/artifact" }
@@ -78,6 +93,17 @@
           }
         }
       ]
+    },
+    "excluded_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "file_type", "reason", "matched_name"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relative_path" },
+        "file_type": { "enum": ["regular", "directory", "symlink", "other"] },
+        "reason": { "const": "configured_name_exclusion" },
+        "matched_name": { "type": "string", "minLength": 1 }
+      }
     }
   }
 }

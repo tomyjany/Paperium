@@ -26,7 +26,7 @@ INVENTORY_SCHEMA_VERSION = 1
 INVENTORY_STAGE_VERSION = 1
 BINARY_SNIFF_BYTES = 64 * 1024
 MANIFEST_PATH_TEMPLATE = "{work_directory}/manifest.json"
-EXCLUDED_NAMES = {
+DEFAULT_EXCLUDED_NAMES = {
     ".git",
     ".hg",
     ".svn",
@@ -35,6 +35,9 @@ EXCLUDED_NAMES = {
     ".mypy_cache",
     ".ruff_cache",
     ".DS_Store",
+    ".venv",
+    ".uv-cache",
+    "node_modules",
 }
 EXTENSION_KIND_MAP = {
     ".json": "json",
@@ -133,13 +136,14 @@ def inventory_one(
     if not experiment_dir.is_dir():
         raise InventoryError(f"manifest experiment path is not a directory: {experiment_path}")
 
-    artifacts = _inventory_artifacts(repo, experiment_dir)
+    artifacts, excluded_artifacts = _inventory_artifacts(repo, experiment_dir, config)
     try:
         fingerprint = _inventory_fingerprint(
             repo=repo,
             config=config,
             manifest_path=manifest_path,
             artifacts=artifacts,
+            excluded_artifacts=excluded_artifacts,
         )
     except (FingerprintError, OSError) as exc:
         raise InventoryError(
@@ -151,6 +155,11 @@ def inventory_one(
         "question_path": manifest_entry["question_path"],
         "experiment_path": experiment_path,
         "fingerprint": fingerprint,
+        "counts": {
+            "artifact_count": len(artifacts),
+            "excluded_artifact_count": len(excluded_artifacts),
+        },
+        "excluded_artifacts": excluded_artifacts,
         "artifacts": artifacts,
     }
     try:
@@ -170,8 +179,12 @@ def inventory_one(
     )
 
 
-def _inventory_artifacts(repo: Path, experiment_dir: Path) -> list[dict[str, Any]]:
+def _inventory_artifacts(
+    repo: Path, experiment_dir: Path, config: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     artifacts: list[dict[str, Any]] = []
+    excluded_artifacts: list[dict[str, Any]] = []
+    excluded_names = set(config.get("inventory", {}).get("exclude_names", DEFAULT_EXCLUDED_NAMES))
     pending = [experiment_dir]
     while pending:
         directory = pending.pop()
@@ -182,9 +195,10 @@ def _inventory_artifacts(repo: Path, experiment_dir: Path) -> list[dict[str, Any
             raise InventoryError(f"could not list experiment directory: {relative}: {exc}") from exc
 
         for entry in entries:
-            if entry.name in EXCLUDED_NAMES:
-                continue
             path = Path(entry.path)
+            if entry.name in excluded_names:
+                excluded_artifacts.append(_excluded_artifact(repo, path, entry, entry.name))
+                continue
             try:
                 is_symlink = entry.is_symlink()
                 is_dir = entry.is_dir(follow_symlinks=False)
@@ -201,7 +215,33 @@ def _inventory_artifacts(repo: Path, experiment_dir: Path) -> list[dict[str, Any
             if is_file:
                 artifacts.append(_regular_file_artifact(repo, path))
 
-    return sorted(artifacts, key=lambda artifact: posix_path_sort_key(artifact["path"]))
+    return (
+        sorted(artifacts, key=lambda artifact: posix_path_sort_key(artifact["path"])),
+        sorted(excluded_artifacts, key=lambda artifact: posix_path_sort_key(artifact["path"])),
+    )
+
+
+def _excluded_artifact(
+    repo: Path, path: Path, entry: os.DirEntry[str], matched_name: str
+) -> dict[str, Any]:
+    try:
+        if entry.is_symlink():
+            file_type = "symlink"
+        elif entry.is_dir(follow_symlinks=False):
+            file_type = "directory"
+        elif entry.is_file(follow_symlinks=False):
+            file_type = "regular"
+        else:
+            file_type = "other"
+    except OSError as exc:
+        relative = _repo_relative_path(repo, path)
+        raise InventoryError(f"could not inspect excluded artifact: {relative}: {exc}") from exc
+    return {
+        "path": _repo_relative_path(repo, path),
+        "file_type": file_type,
+        "reason": "configured_name_exclusion",
+        "matched_name": matched_name,
+    }
 
 
 def _regular_file_artifact(repo: Path, path: Path) -> dict[str, Any]:
@@ -284,6 +324,7 @@ def _inventory_fingerprint(
     config: dict[str, Any],
     manifest_path: str,
     artifacts: list[dict[str, Any]],
+    excluded_artifacts: list[dict[str, Any]],
 ) -> dict[str, Any]:
     source_files = [
         SourceFile(path=artifact["path"], file=repo / artifact["path"])
@@ -317,7 +358,9 @@ def _inventory_fingerprint(
         ],
         extra_inputs={
             "artifact_listing": listing_inputs,
+            "excluded_artifacts": excluded_artifacts,
             "artifact_count": len(artifacts),
+            "excluded_artifact_count": len(excluded_artifacts),
         },
     )
 
@@ -411,7 +454,10 @@ def _manifest_path_without_following(repo: Path, path: str) -> Path:
 
 def _relevant_config(config: dict[str, Any]) -> dict[str, Any]:
     return {
+        "inventory": {
+            "exclude_names": config.get("inventory", {}).get("exclude_names", []),
+        },
         "paper": {
             "work_directory": config["paper"]["work_directory"],
-        }
+        },
     }

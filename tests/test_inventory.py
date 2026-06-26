@@ -168,6 +168,38 @@ def test_inventory_honors_exact_exclusion_list(tmp_path):
         assert EXCLUDED_NAMES.isdisjoint(Path(path).parts)
 
 
+def test_inventory_records_configured_exclusions_without_descending_into_them(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    experiment = repo / "questions" / "q001-throughput" / "experiments" / "exp002-incomplete"
+    for name in [".venv", ".uv-cache", "node_modules"]:
+        directory = experiment / name
+        directory.mkdir()
+        (directory / "dependency.json").write_text('{"ignored": true}\n', encoding="utf-8")
+    _discover(repo)
+
+    result = _inventory(repo)
+
+    assert result.returncode == 0, result.stderr
+    inventory = _inventory_for(repo, "exp002-incomplete")
+    artifact_paths = [artifact["path"] for artifact in inventory["artifacts"]]
+    excluded_paths = [entry["path"] for entry in inventory["excluded_artifacts"]]
+
+    assert not any(".venv" in Path(path).parts for path in artifact_paths)
+    assert not any(".uv-cache" in Path(path).parts for path in artifact_paths)
+    assert not any("node_modules" in Path(path).parts for path in artifact_paths)
+    assert excluded_paths == [
+        "questions/q001-throughput/experiments/exp002-incomplete/.uv-cache",
+        "questions/q001-throughput/experiments/exp002-incomplete/.venv",
+        "questions/q001-throughput/experiments/exp002-incomplete/node_modules",
+    ]
+    assert inventory["counts"]["artifact_count"] == len(inventory["artifacts"])
+    assert inventory["counts"]["excluded_artifact_count"] == 3
+    assert (
+        inventory["fingerprint"]["extra_inputs"]["excluded_artifacts"]
+        == inventory["excluded_artifacts"]
+    )
+
+
 def test_external_symlink_is_unsupported_artifact_not_global_failure(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     outside = tmp_path / "outside.txt"
