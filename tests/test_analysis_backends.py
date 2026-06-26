@@ -120,6 +120,7 @@ def test_fake_backend_does_not_apply_codex_timeout_behavior(tmp_path):
 def _codex_help(
     *,
     output_schema: bool = True,
+    output_last_message: bool = True,
     sandbox: bool = True,
     read_only: bool = True,
     ask_for_approval: bool = True,
@@ -128,6 +129,8 @@ def _codex_help(
     parts = ["Usage: codex exec [OPTIONS] -"]
     if output_schema:
         parts.append("--output-schema <PATH>")
+    if output_last_message:
+        parts.append("--output-last-message <PATH>")
     if sandbox:
         parts.append("--sandbox <MODE>")
     if read_only:
@@ -219,6 +222,7 @@ def test_missing_codex_executable_reports_missing_dependency_before_invocation(
     ("help_text", "expected"),
     [
         (_codex_help(output_schema=False), "--output-schema"),
+        (_codex_help(output_last_message=False), "--output-last-message"),
         (_codex_help(sandbox=False), "--sandbox"),
         (_codex_help(read_only=False), "read-only"),
         (_codex_help(ask_for_approval=False), "--ask-for-approval"),
@@ -245,6 +249,19 @@ def test_codex_capability_failures_refuse_before_model_invocation(
     assert result.raw_response is None
     assert result.stderr is not None
     assert expected in result.stderr
+
+
+def test_codex_capability_probe_reports_permission_launch_failure(monkeypatch):
+    def fake_run(args, **kwargs):
+        raise PermissionError("permission denied")
+
+    _install_subprocess_run(monkeypatch, fake_run)
+
+    diagnostics = check_codex_exec_capabilities("codex-test")
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "codex_launch_failed"
+    assert "permission denied" in diagnostics[0].message
 
 
 def test_codex_command_uses_required_flags_stdin_and_schema(tmp_path, monkeypatch):
@@ -375,6 +392,28 @@ def test_codex_nonzero_return_code_returns_failed_status_without_raw_response(
     assert result.return_code == 2
     assert result.stdout == "out"
     assert result.stderr == "err"
+
+
+def test_codex_model_invocation_oserror_returns_failed_status(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args == ["codex-test", "exec", "--help"]:
+            return _completed(args, stdout=_codex_help())
+        raise OSError("exec format error")
+
+    _install_subprocess_run(monkeypatch, fake_run)
+
+    result = CodexExecBackend(codex_bin="codex-test").analyze(_job(tmp_path))
+
+    assert len(calls) == 2
+    assert result.status == "failed"
+    assert result.raw_response is None
+    assert result.return_code is None
+    assert result.stdout is None
+    assert result.stderr is not None
+    assert "exec format error" in result.stderr
 
 
 def test_codex_missing_final_message_file_returns_failed_status(tmp_path, monkeypatch):

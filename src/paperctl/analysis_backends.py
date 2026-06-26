@@ -91,6 +91,7 @@ class FakeBackend:
 
 
 CODE_CODEX_MISSING_DEPENDENCY = "codex_missing_dependency"
+CODE_CODEX_LAUNCH_FAILED = "codex_launch_failed"
 CODE_CODEX_CAPABILITY_MISSING = "codex_capability_missing"
 CODE_CODEX_HELP_FAILED = "codex_help_failed"
 CODE_CODEX_TEMP_DIR_UNAVAILABLE = "codex_temp_dir_unavailable"
@@ -114,6 +115,14 @@ def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
                 detail={"error": str(exc)},
             )
         ]
+    except OSError as exc:
+        return [
+            AnalysisDiagnostic(
+                code=CODE_CODEX_LAUNCH_FAILED,
+                message=f"Codex exec capability probe launch failed: {exc}",
+                detail={"error": str(exc)},
+            )
+        ]
 
     diagnostics: list[AnalysisDiagnostic] = []
     if result.returncode != 0:
@@ -128,6 +137,7 @@ def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
     help_text = "\n".join(part for part in (result.stdout, result.stderr) if part)
     required_substrings = (
         "--output-schema",
+        "--output-last-message",
         "--sandbox",
         "read-only",
         "--ask-for-approval",
@@ -209,6 +219,15 @@ class CodexExecBackend:
                     return_code=None,
                     stdout=_coerce_subprocess_text(exc.output),
                     stderr=_coerce_subprocess_text(exc.stderr),
+                )
+            except OSError as exc:
+                return AnalysisBackendResult(
+                    backend_name=self.name,
+                    status="failed",
+                    raw_response=None,
+                    return_code=None,
+                    stdout=None,
+                    stderr=f"{CODE_CODEX_LAUNCH_FAILED}: Codex exec launch failed: {exc}",
                 )
 
             if result.returncode != 0:
