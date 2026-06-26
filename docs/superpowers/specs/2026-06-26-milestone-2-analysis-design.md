@@ -239,6 +239,10 @@ Concrete field bounds:
 - `unit`: null or 1 to 80 Unicode code points
 - `formula`: 1 to 300 ASCII characters
 - `input_claim_ids`: 1 to 20 unique entries
+- claim string `value`: at most 2,000 Unicode code points
+- source `path`: repo-relative path, 1 to 1,000 Unicode code points
+- source `source_hash`: `sha256:` plus 64 lowercase hex characters
+- source `selector`: JSON Pointer string, at most 1,000 Unicode code points
 
 Claim IDs deliberately use an identifier grammar rather than hyphenated names
 so the formula parser can distinguish claim symbols from subtraction.
@@ -267,6 +271,10 @@ Allowed `value_type` values are:
 - `integer`
 - `boolean`
 - `null`
+
+Claim `value` must conform to `value_type`. String values use the concrete
+2,000-code-point cap above. Numeric, boolean, and null values use JSON scalar
+schema validation plus the numeric exactness rules below.
 
 The source must include:
 
