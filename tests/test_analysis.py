@@ -124,6 +124,45 @@ def test_analysis_prompt_redacts_embedded_paths_and_timestamps_in_evidence_text(
     assert "[omitted timestamp]" in prompt
 
 
+def test_analysis_prompt_preserves_date_like_segments_in_repository_relative_paths():
+    context = _job_context()
+    context["question_path"] = "questions/2026-06-26-throughput"
+    context["question_readme_path"] = "questions/2026-06-26-throughput/README.md"
+    context["experiment_path"] = "questions/2026-06-26-throughput/experiments/exp001"
+    context["inventory_path"] = (
+        "paper/work/inventories/questions/2026-06-26-throughput/experiments/exp001.json"
+    )
+    context["evidence_packet_path"] = (
+        "paper/work/evidence/questions/2026-06-26-throughput/experiments/exp001.json"
+    )
+    packet = _evidence_packet()
+    packet["question_path"] = "questions/2026-06-26-throughput"
+    packet["experiment_path"] = "questions/2026-06-26-throughput/experiments/exp001"
+    packet["canonical_facts"][0]["source"]["path"] = (
+        "questions/2026-06-26-throughput/experiments/exp001/outputs/metrics.json"
+    )
+
+    prompt = build_analysis_prompt(context, packet)
+
+    assert "questions/2026-06-26-throughput/experiments/exp001" in prompt
+    assert "questions/2026-06-26-throughput/experiments/exp001/outputs/metrics.json" in prompt
+    assert "questions/[omitted timestamp]-throughput" not in prompt
+
+
+def test_analysis_prompt_redacts_paths_ending_in_parent_directory_traversal():
+    packet = _evidence_packet()
+    packet["diagnostics"] = [
+        "read from questions/q/experiments/exp/..",
+        r"read from questions\q\experiments\exp\..",
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert "questions/q/experiments/exp/.." not in prompt
+    assert r"questions\\q\\experiments\\exp\\.." not in prompt
+    assert "[omitted unsafe path]" in prompt
+
+
 def test_analysis_prompt_preserves_json_pointer_selectors():
     packet = _evidence_packet()
     packet["observed_values"] = [

@@ -44,6 +44,9 @@ _UNSAFE_PATH_PATTERN = re.compile(
     r"(?<![\w.-])(?:[a-z]:[\\/]|~|/|(?:\.\.[\\/])+|tmp[\\/])[^\s\"']*",
     re.IGNORECASE,
 )
+_TRAVERSAL_PATH_PATTERN = re.compile(
+    r"(?<![\w.-])[^\s\"']*[\\/]\.\.(?:[\\/][^\s\"']*)?",
+)
 
 _OMITTED_VALUE_KEYS = {
     "cwd",
@@ -123,9 +126,12 @@ def _sanitize_for_prompt(value: Any) -> Any:
     if isinstance(value, str):
         if _is_unsafe_path(value):
             return "[omitted unsafe path]"
+        if _is_repo_relative_path(value):
+            return value
         if _TIMESTAMP_PATTERN.fullmatch(value):
             return "[omitted timestamp]"
         sanitized = _UNSAFE_PATH_PATTERN.sub("[omitted unsafe path]", value)
+        sanitized = _TRAVERSAL_PATH_PATTERN.sub("[omitted unsafe path]", sanitized)
         sanitized = _TIMESTAMP_PATTERN.sub("[omitted timestamp]", sanitized)
         return sanitized
     return value
@@ -149,4 +155,14 @@ def _is_unsafe_path(value: str) -> bool:
         or value.startswith("..\\")
         or "/../" in value
         or "\\..\\" in value
+        or value.endswith("/..")
+        or value.endswith("\\..")
+    )
+
+
+def _is_repo_relative_path(value: str) -> bool:
+    return (
+        ("/" in value or "\\" in value)
+        and not re.search(r"\s|[\"']", value)
+        and not _is_unsafe_path(value)
     )
