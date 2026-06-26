@@ -47,6 +47,16 @@
       },
       "then": {
         "properties": {
+          "backend": {
+            "allOf": [
+              { "$ref": "#/$defs/backend" },
+              {
+                "properties": {
+                  "status": { "const": "completed" }
+                }
+              }
+            ]
+          },
           "diagnostics": { "type": "array", "maxItems": 0 },
           "analysis": { "$ref": "#/$defs/experiment_analysis" },
           "raw_output_sha256": { "$ref": "#/$defs/hash" }
@@ -111,7 +121,7 @@
       "additionalProperties": false,
       "required": ["name", "version"],
       "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "name": { "const": "analyze" },
         "version": { "type": "integer", "minimum": 1 }
       }
     },

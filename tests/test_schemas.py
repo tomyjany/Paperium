@@ -222,7 +222,7 @@ def _experiment_analysis(**overrides):
 
 def _analysis_fingerprint(**overrides):
     fingerprint = {
-        "stage": {"name": "analysis", "version": 1},
+        "stage": {"name": "analyze", "version": 1},
         "schema_version": 1,
         "config_sha256": "sha256:" + "a" * 64,
         "source_files": [
@@ -636,6 +636,16 @@ def test_analysis_state_schema_requires_stage_fingerprint_contract():
             validate_artifact("analysis-state.schema.json", state)
 
 
+def test_analysis_state_fingerprint_stage_name_must_be_analyze():
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state()
+    state["fingerprint"]["stage"]["name"] = "analysis"
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
 def test_analysis_state_fingerprint_allows_non_empty_extra_inputs():
     from paperctl._support.schema import validate_artifact
 
@@ -699,6 +709,16 @@ def test_analysis_state_accepted_state_requires_analysis_empty_diagnostics_and_r
         validate_artifact("analysis-state.schema.json", state)
 
 
+@pytest.mark.parametrize("backend_status", ["failed", "timed_out"])
+def test_analysis_state_accepted_state_requires_completed_backend(backend_status):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state(backend=_analysis_backend(status=backend_status))
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -718,17 +738,33 @@ def test_analysis_state_failed_state_requires_null_analysis_and_non_empty_diagno
     with pytest.raises(ValidationError):
         validate_artifact("analysis-state.schema.json", state)
 
+
+def test_analysis_state_failed_state_allows_raw_output_sha256():
+    from paperctl._support.schema import validate_artifact
+
     state = _failed_analysis_state(raw_output_sha256="sha256:" + "3" * 64)
+    validate_artifact("analysis-state.schema.json", state)
+
+
+@pytest.mark.parametrize("name", ["fake", "codex-exec"])
+@pytest.mark.parametrize("return_code", [0, 1, None])
+def test_analysis_state_accepted_backend_metadata_accepts_completed_status(name, return_code):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state(
+        backend=_analysis_backend(name=name, status="completed", return_code=return_code)
+    )
+
     validate_artifact("analysis-state.schema.json", state)
 
 
 @pytest.mark.parametrize("name", ["fake", "codex-exec"])
 @pytest.mark.parametrize("status", ["completed", "failed", "timed_out"])
 @pytest.mark.parametrize("return_code", [0, 1, None])
-def test_analysis_state_backend_metadata_accepts_known_values(name, status, return_code):
+def test_analysis_state_failed_backend_metadata_accepts_known_statuses(name, status, return_code):
     from paperctl._support.schema import validate_artifact
 
-    state = _analysis_state(
+    state = _failed_analysis_state(
         backend=_analysis_backend(name=name, status=status, return_code=return_code)
     )
 
