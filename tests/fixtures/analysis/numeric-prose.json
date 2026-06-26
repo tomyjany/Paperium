@@ -6,9 +6,9 @@
   "title": "Numeric prose",
   "execution_status": "completed",
   "hypothesis_verdict": "supported",
-  "objective": "Evaluate throughput and mention 42.5 in prose.",
+  "objective": "Evaluate throughput and mention the measured value in prose.",
   "answer": "The run achieved 42.5 pages per second according to the backend response.",
-  "meaning": "The prose repeats 42.5 outside a structured claim.",
+  "meaning": "The prose repeats measured evidence outside a structured claim.",
   "limitations": [
     "This fixture intentionally places numeric evidence in prose."
   ],
