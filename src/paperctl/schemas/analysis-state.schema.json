@@ -23,7 +23,7 @@
     "status": { "enum": ["accepted", "failed"] },
     "question_path": { "$ref": "#/$defs/relative_path" },
     "experiment_path": { "$ref": "#/$defs/relative_path" },
-    "analysis_path": { "$ref": "#/$defs/relative_path" },
+    "analysis_path": { "$ref": "#/$defs/analysis_path" },
     "fingerprint": { "$ref": "#/$defs/stage_fingerprint" },
     "backend": { "$ref": "#/$defs/backend" },
     "diagnostics": {
@@ -98,6 +98,15 @@
       "minLength": 1,
       "maxLength": 1000,
       "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "analysis_path": {
+      "allOf": [
+        { "$ref": "#/$defs/relative_path" },
+        {
+          "type": "string",
+          "pattern": "^paper/work/analyses/.+\\.json$"
+        }
+      ]
     },
     "json_pointer": {
       "type": "string",

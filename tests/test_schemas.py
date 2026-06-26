@@ -611,6 +611,24 @@ def test_analysis_state_paths_must_be_posix_repo_relative(field, path):
         validate_artifact("analysis-state.schema.json", state)
 
 
+@pytest.mark.parametrize(
+    "analysis_path",
+    [
+        "paper/work/analysis/questions/q001-throughput/experiments/exp001-completed.json",
+        "paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.txt",
+        "paper/work/analyses.json",
+        "paper/work/analyses/",
+    ],
+)
+def test_analysis_state_analysis_path_must_use_m2_output_layout(analysis_path):
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state(analysis_path=analysis_path)
+
+    with pytest.raises(ValidationError):
+        validate_artifact("analysis-state.schema.json", state)
+
+
 def test_analysis_state_schema_requires_stage_fingerprint_contract():
     from paperctl._support.schema import validate_artifact
 
@@ -752,6 +770,39 @@ def test_analysis_state_accepted_backend_metadata_accepts_completed_status(name,
     )
 
     validate_artifact("analysis-state.schema.json", state)
+
+
+def test_analysis_state_integrity_accepts_matching_accepted_state_paths():
+    from paperctl._support.schema import validate_analysis_state_integrity
+
+    validate_analysis_state_integrity(_analysis_state())
+
+
+@pytest.mark.parametrize(
+    ("state_path", "analysis_path"),
+    [
+        ("question_path", "questions/q999-other"),
+        ("experiment_path", "questions/q001-throughput/experiments/exp999-other"),
+    ],
+)
+def test_analysis_state_integrity_rejects_mismatched_accepted_state_paths(
+    state_path,
+    analysis_path,
+):
+    from paperctl._support.schema import AnalysisStateIntegrityError
+    from paperctl._support.schema import validate_analysis_state_integrity
+
+    state = _analysis_state()
+    state["analysis"][state_path] = analysis_path
+
+    with pytest.raises(AnalysisStateIntegrityError, match=state_path):
+        validate_analysis_state_integrity(state)
+
+
+def test_analysis_state_integrity_ignores_failed_state_without_analysis():
+    from paperctl._support.schema import validate_analysis_state_integrity
+
+    validate_analysis_state_integrity(_failed_analysis_state())
 
 
 @pytest.mark.parametrize("name", ["fake", "codex-exec"])
