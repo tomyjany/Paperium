@@ -44,6 +44,36 @@ def test_rejects_arbitrary_numeric_literal():
     assert excinfo.value.code == "invalid_numeric_literal"
 
 
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "1.0000000000000001",
+        "0.99999999999999999",
+        "99.999999999999999999",
+    ],
+)
+def test_rejects_float_literals_that_ast_would_round_to_allowed_values(formula):
+    with pytest.raises(FormulaError) as excinfo:
+        evaluate_formula_exact(formula, {}, [])
+
+    assert excinfo.value.code == "invalid_numeric_literal"
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "a # + missing",
+        "a\n# + missing",
+        "a\n",
+    ],
+)
+def test_rejects_comments_and_newlines(formula):
+    with pytest.raises(FormulaError) as excinfo:
+        evaluate_formula_exact(formula, {"a": Decimal("1")}, ["a"])
+
+    assert excinfo.value.code == "invalid_syntax"
+
+
 def test_rejects_unknown_symbol():
     with pytest.raises(FormulaError) as excinfo:
         evaluate_formula_exact("missing", {}, ["missing"])
@@ -77,6 +107,16 @@ def test_accepts_binary_addition_and_subtraction():
     )
 
     assert result == Decimal("7.25")
+
+
+def test_accepts_negative_results_from_binary_subtraction():
+    result = evaluate_formula_exact(
+        "a - b",
+        {"a": Decimal("1"), "b": Decimal("3")},
+        ["a", "b"],
+    )
+
+    assert result == Decimal("-2")
 
 
 def test_rejects_division_by_zero():

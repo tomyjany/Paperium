@@ -28,6 +28,11 @@ def evaluate_formula_exact(
 ) -> Decimal:
     """Evaluate a restricted arithmetic formula without rounding."""
 
+    if "#" in formula or "\n" in formula or "\r" in formula:
+        raise FormulaError(
+            "invalid_syntax", "Formula must be a single expression without comments."
+        )
+
     try:
         tree = ast.parse(formula, mode="eval")
     except SyntaxError as exc:
@@ -116,9 +121,9 @@ def _validate_operator(operator: ast.operator) -> None:
 
 def _constant_to_fraction(node: ast.Constant) -> Fraction:
     value = node.value
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise FormulaError(
-            "unsupported_syntax",
+            "invalid_numeric_literal",
             f"Formula contains unsupported constant {value!r}.",
         )
     decimal_value = _coerce_decimal("literal", value)
