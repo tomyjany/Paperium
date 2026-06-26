@@ -41,7 +41,7 @@ _TIMESTAMP_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+-]+Z?)?\b",
 )
 _UNSAFE_PATH_PATTERN = re.compile(
-    r"(?<![\w.-])(?:~|/|(?:\.\./)+|tmp/)[^\s\"']*",
+    r"(?<![\w.-])(?:[a-z]:[\\/]|~|/|(?:\.\.[\\/])+|tmp[\\/])[^\s\"']*",
     re.IGNORECASE,
 )
 
@@ -112,7 +112,7 @@ def _prompt_value(value: Any) -> Any:
 def _sanitize_for_prompt(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): _sanitize_for_prompt(item)
+            str(key): _sanitize_dict_item_for_prompt(value, str(key), item)
             for key, item in value.items()
             if str(key) not in _OMITTED_VALUE_KEYS
         }
@@ -131,12 +131,22 @@ def _sanitize_for_prompt(value: Any) -> Any:
     return value
 
 
+def _sanitize_dict_item_for_prompt(parent: dict[Any, Any], key: str, value: Any) -> Any:
+    if key == "selector" and parent.get("selector_type") == "json_pointer":
+        return value
+    return _sanitize_for_prompt(value)
+
+
 def _is_unsafe_path(value: str) -> bool:
     return (
         value.startswith("/")
         or value.startswith("~")
+        or re.match(r"^[a-z]:[\\/]", value, re.IGNORECASE) is not None
         or "\\tmp\\" in value.lower()
         or value.lower().startswith("tmp/")
+        or value.lower().startswith("tmp\\")
         or value.startswith("../")
+        or value.startswith("..\\")
         or "/../" in value
+        or "\\..\\" in value
     )

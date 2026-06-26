@@ -124,6 +124,42 @@ def test_analysis_prompt_redacts_embedded_paths_and_timestamps_in_evidence_text(
     assert "[omitted timestamp]" in prompt
 
 
+def test_analysis_prompt_preserves_json_pointer_selectors():
+    packet = _evidence_packet()
+    packet["observed_values"] = [
+        {
+            "value": 42.5,
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/exp001-completed/"
+                    "outputs/experiment_report.json"
+                ),
+                "selector_type": "json_pointer",
+                "selector": "/observed_values/0/source/selector",
+            },
+        }
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert '"/canonical_facts/0/value"' in prompt
+    assert '"/observed_values/0/source/selector"' in prompt
+
+
+def test_analysis_prompt_redacts_embedded_windows_absolute_and_temp_paths():
+    packet = _evidence_packet()
+    packet["diagnostics"] = [
+        r"loaded result from C:\Users\tom\target-repo\result.json",
+        r"wrote temporary copy to C:\Temp\paperctl\result.json",
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert r"C:\\Users\\tom\\target-repo\\result.json" not in prompt
+    assert r"C:\\Temp\\paperctl\\result.json" not in prompt
+    assert "[omitted unsafe path]" in prompt
+
+
 def test_analysis_prompt_handles_missing_question_readme_metadata():
     context = _job_context()
     context["question_readme_path"] = None
