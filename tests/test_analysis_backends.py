@@ -66,8 +66,9 @@ def test_fake_backend_returns_raw_bytes_without_parsing_json(tmp_path):
 
 
 def test_missing_fake_response_returns_failed_backend_status(tmp_path):
+    missing_path = tmp_path / "missing.json"
     result = FakeBackend().analyze(
-        _job(tmp_path, backend_options={"fake_response_path": str(tmp_path / "missing.json")})
+        _job(tmp_path, backend_options={"fake_response_path": str(missing_path)})
     )
 
     assert result.backend_name == "fake"
@@ -75,7 +76,10 @@ def test_missing_fake_response_returns_failed_backend_status(tmp_path):
     assert result.raw_response is None
     assert result.return_code is None
     assert result.stdout is None
-    assert result.stderr == "fake response file could not be read"
+    assert result.stderr is not None
+    assert "fake response file could not be read" in result.stderr
+    assert str(missing_path) in result.stderr
+    assert "No such file" in result.stderr or "not found" in result.stderr
 
 
 def test_missing_fake_response_path_option_returns_failed_backend_status(tmp_path):

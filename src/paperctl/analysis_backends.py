@@ -65,14 +65,14 @@ class FakeBackend:
 
         try:
             raw_response = response_path.read_bytes()
-        except OSError:
+        except OSError as exc:
             return AnalysisBackendResult(
                 backend_name=self.name,
                 status="failed",
                 raw_response=None,
                 return_code=None,
                 stdout=None,
-                stderr="fake response file could not be read",
+                stderr=f"fake response file could not be read: {response_path}: {exc}",
             )
 
         return AnalysisBackendResult(
