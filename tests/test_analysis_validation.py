@@ -1,15 +1,19 @@
 from decimal import Decimal
 from pathlib import Path
 import copy
+import dataclasses
 import json
 
 import pytest
 
 from paperctl._support.hashing import sha256_file
 from paperctl.analysis_validation import (
+    ANALYSIS_VALIDATION_VERSION,
+    AnalysisDiagnostic,
     CODE_ABSOLUTE_SOURCE_PATH,
     CODE_DERIVED_DIVISION_BY_ZERO,
     CODE_DERIVED_INEXACT_DIVISION,
+    CODE_DERIVED_NON_INTEGRAL_RESULT,
     CODE_DERIVED_NON_NUMERIC_INPUT,
     CODE_DERIVED_UNCITED_NUMERIC_LITERAL,
     CODE_DERIVED_UNKNOWN_INPUT,
@@ -48,7 +52,23 @@ MANIFEST = ROOT / "tests/golden/minimal-research-repo/paper/work/manifest.json"
 
 
 def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("artifact_type") == "experiment_analysis":
+        _add_default_analysis_adapter_metadata(data)
+    return data
+
+
+def _add_default_analysis_adapter_metadata(analysis: dict) -> None:
+    for claim in analysis.get("claims", []):
+        if not isinstance(claim, dict) or claim.get("claim_type") != "measured_value":
+            continue
+        source = claim.get("source")
+        if not isinstance(source, dict):
+            continue
+        source_path = source.get("path")
+        if isinstance(source_path, str) and source_path.endswith(".json"):
+            source.setdefault("adapter", "json")
+            source.setdefault("adapter_version", "1")
 
 
 def _success_analysis() -> dict:
@@ -80,6 +100,29 @@ def _only_code(analysis: dict, evidence_packet: dict | None = None, repo: Path =
     codes = _codes(analysis, evidence_packet, repo)
     assert len(codes) == 1
     return codes[0]
+
+
+def test_exposes_public_api_version_and_frozen_diagnostic_shape():
+    diagnostic = AnalysisDiagnostic(
+        code="sample_code",
+        message="Sample message.",
+        path="questions/q001-throughput/experiments/exp001-completed/outputs/result.json",
+        selector_type="json_pointer",
+        selector="/value",
+        detail={"field": "value"},
+    )
+
+    assert ANALYSIS_VALIDATION_VERSION == 1
+    assert dataclasses.asdict(diagnostic) == {
+        "code": "sample_code",
+        "message": "Sample message.",
+        "path": "questions/q001-throughput/experiments/exp001-completed/outputs/result.json",
+        "selector_type": "json_pointer",
+        "selector": "/value",
+        "detail": {"field": "value"},
+    }
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        diagnostic.code = "changed"
 
 
 def test_evaluates_exact_terminating_division():
@@ -266,6 +309,23 @@ def test_rejects_measured_claim_absent_from_evidence():
     )
 
 
+def test_rejects_measured_claim_adapter_mismatch_when_metadata_present():
+    analysis = _success_analysis()
+    analysis["claims"][0]["source"]["adapter"] = "yaml"
+    evidence = _success_evidence()
+
+    assert _only_code(analysis, evidence) == CODE_MEASURED_CLAIM_NOT_IN_EVIDENCE
+
+
+def test_rejects_measured_claim_adapter_version_mismatch_when_metadata_present():
+    analysis = _success_analysis()
+    analysis["claims"][0]["source"]["adapter"] = "json"
+    analysis["claims"][0]["source"]["adapter_version"] = "2"
+    evidence = _success_evidence()
+
+    assert _only_code(analysis, evidence) == CODE_MEASURED_CLAIM_NOT_IN_EVIDENCE
+
+
 def test_rejects_source_outside_selected_experiment():
     assert _only_code(_load_json(ANALYSIS_FIXTURES / "source-outside-experiment.json")) == (
         CODE_SOURCE_PATH_OUTSIDE_EXPERIMENT
@@ -317,6 +377,8 @@ def test_rejects_source_kind_other_than_json_or_yaml():
     claim["source"]["source_hash"] = (
         "sha256:bd8b54158667cfd139740a854a3f3e3f19b642ebb19fd77e7dee0e1c7e6f96cc"
     )
+    claim["source"].pop("adapter")
+    claim["source"].pop("adapter_version")
     evidence = _success_evidence()
     evidence["canonical_facts"][0]["source"] = copy.deepcopy(claim["source"])
 
@@ -531,6 +593,42 @@ def test_rejects_non_exact_rounded_division():
     )
 
     assert _only_code(analysis, evidence) == CODE_DERIVED_INEXACT_DIVISION
+
+
+def test_rejects_derived_integer_claim_with_non_integral_exact_result():
+    analysis = _success_analysis()
+    schema_version_claim = copy.deepcopy(analysis["claims"][0])
+    schema_version_claim["claim_id"] = "schema_version"
+    schema_version_claim["label"] = "Schema version"
+    schema_version_claim["value"] = 1
+    schema_version_claim["value_type"] = "integer"
+    schema_version_claim["unit"] = None
+    schema_version_claim["source"]["selector"] = "/schema_version"
+    analysis["claims"].append(schema_version_claim)
+    analysis["claims"].append(
+        {
+            "claim_id": "schema_version_percent",
+            "claim_type": "derived_value",
+            "label": "Schema version percent",
+            "value": 0,
+            "value_type": "integer",
+            "unit": None,
+            "formula": "schema_version / 100",
+            "input_claim_ids": ["schema_version"],
+        }
+    )
+    evidence = _success_evidence()
+    evidence["canonical_facts"].append(
+        {
+            "fact_id": "schema_version",
+            "value": 1,
+            "value_type": "integer",
+            "unit": None,
+            "source": copy.deepcopy(schema_version_claim["source"]),
+        }
+    )
+
+    assert _only_code(analysis, evidence) == CODE_DERIVED_NON_INTEGRAL_RESULT
 
 
 def test_rejects_derived_division_by_zero():

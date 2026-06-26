@@ -563,7 +563,26 @@ def _same_source(left: dict[str, Any], right: dict[str, Any]) -> bool:
         and left.get("source_hash") == right.get("source_hash")
         and left.get("selector_type") == right.get("selector_type")
         and left.get("selector") == right.get("selector")
+        and _optional_source_field_matches(left, right, "adapter", normalize=True)
+        and _optional_source_field_matches(left, right, "adapter_version")
     )
+
+
+def _optional_source_field_matches(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    field: str,
+    *,
+    normalize: bool = False,
+) -> bool:
+    if field not in left and field not in right:
+        return True
+    left_value = left.get(field)
+    right_value = right.get(field)
+    if normalize:
+        left_value = str(left_value).lower() if left_value is not None else None
+        right_value = str(right_value).lower() if right_value is not None else None
+    return left_value == right_value
 
 
 def _matches_claimable(claimable: _ClaimableValue, claim: dict[str, Any]) -> bool:
