@@ -55,7 +55,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        if args.command == "analyze" and all(not item.startswith("-") for item in unknown):
+            args.experiments.extend(unknown)
+        else:
+            print(
+                f"{parser.prog}: unrecognized arguments: {' '.join(unknown)}",
+                file=sys.stderr,
+            )
+            return INVALID_INVOCATION
     if args.command is None:
         parser.print_help()
         return SUCCESS

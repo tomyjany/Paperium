@@ -221,6 +221,40 @@ def test_analyze_multiple_experiment_args_are_routed_to_batch_runner(
     assert "status: failed" in output
 
 
+def test_analyze_options_can_appear_between_experiment_paths(monkeypatch, tmp_path):
+    from paperctl import cli
+
+    calls = []
+
+    def fake_analyze_experiments(repo, experiments, **kwargs):
+        calls.append((repo, experiments, kwargs))
+        return _batch_result(
+            [
+                _batch_item(COMPLETED_EXPERIMENT, BatchStatus.ACCEPTED),
+                _batch_item(CONFLICT_EXPERIMENT, BatchStatus.ACCEPTED),
+            ]
+        )
+
+    monkeypatch.setattr(cli, "analyze_experiments", fake_analyze_experiments)
+
+    exit_code = cli.main(
+        [
+            "--repo",
+            str(tmp_path),
+            "analyze",
+            COMPLETED_EXPERIMENT,
+            "--jobs",
+            "3",
+            CONFLICT_EXPERIMENT,
+            "--plain",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls[0][1] == [COMPLETED_EXPERIMENT, CONFLICT_EXPERIMENT]
+    assert calls[0][2]["jobs"] == 3
+
+
 def test_analyze_experiments_menu_is_mutually_exclusive_with_explicit_paths(
     monkeypatch, tmp_path, capsys
 ):
