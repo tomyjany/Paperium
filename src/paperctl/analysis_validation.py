@@ -122,24 +122,13 @@ def validate_analysis_claims(
             )
         )
 
-    all_claims_by_id = {
-        claim.get("claim_id"): claim for claim in claims if isinstance(claim.get("claim_id"), str)
-    }
-    for claim in claims:
-        if claim.get("claim_type") != "derived_value":
-            continue
-        claim_diagnostics = _validate_derived_claim(
-            claim=claim,
-            all_claims_by_id=all_claims_by_id,
+    diagnostics.extend(
+        _validate_derived_claims(
+            claims=claims,
             accepted_values=accepted_values,
             accepted_value_types=accepted_value_types,
         )
-        diagnostics.extend(claim_diagnostics)
-        if not claim_diagnostics:
-            claim_id = claim.get("claim_id")
-            if isinstance(claim_id, str):
-                accepted_values[claim_id] = claim.get("value")
-                accepted_value_types[claim_id] = str(claim.get("value_type"))
+    )
 
     return diagnostics
 
@@ -482,7 +471,14 @@ def _source_path_diagnostic(
             source,
         )
 
-    raw_path = resolve_repo_relative_path(repo, path)
+    try:
+        raw_path = resolve_repo_relative_path(repo, path)
+    except ValueError:
+        return _source_diagnostic(
+            CODE_SOURCE_SYMLINK_OUTSIDE_EXPERIMENT,
+            "Measured claim source path resolves outside the selected experiment.",
+            source,
+        )
     try:
         raw_path.relative_to(experiment_dir)
     except ValueError:
@@ -575,7 +571,7 @@ def _optional_source_field_matches(
     *,
     normalize: bool = False,
 ) -> bool:
-    if field not in left and field not in right:
+    if field not in left or field not in right:
         return True
     left_value = left.get(field)
     right_value = right.get(field)
@@ -593,10 +589,91 @@ def _matches_claimable(claimable: _ClaimableValue, claim: dict[str, Any]) -> boo
     )
 
 
+def _validate_derived_claims(
+    *,
+    claims: list[Any],
+    accepted_values: dict[str, Any],
+    accepted_value_types: dict[str, str],
+) -> list[AnalysisDiagnostic]:
+    diagnostics: list[AnalysisDiagnostic] = []
+    all_claims_by_id = {
+        claim.get("claim_id"): claim
+        for claim in claims
+        if isinstance(claim, dict) and isinstance(claim.get("claim_id"), str)
+    }
+    pending = {
+        claim["claim_id"]: claim
+        for claim in claims
+        if isinstance(claim, dict)
+        and claim.get("claim_type") == "derived_value"
+        and isinstance(claim.get("claim_id"), str)
+    }
+
+    while pending:
+        progressed = False
+        for claim_id, claim in list(pending.items()):
+            input_claim_ids = claim.get("input_claim_ids")
+            if not isinstance(input_claim_ids, list):
+                diagnostics.append(
+                    AnalysisDiagnostic(
+                        CODE_DERIVED_UNKNOWN_INPUT,
+                        "Derived claim input_claim_ids must be a list.",
+                        detail={"claim_id": claim_id},
+                    )
+                )
+                del pending[claim_id]
+                progressed = True
+                continue
+
+            missing_inputs = [
+                input_claim_id
+                for input_claim_id in input_claim_ids
+                if input_claim_id not in all_claims_by_id
+                or (input_claim_id not in accepted_values and input_claim_id not in pending)
+            ]
+            if missing_inputs:
+                diagnostics.append(
+                    AnalysisDiagnostic(
+                        CODE_DERIVED_UNKNOWN_INPUT,
+                        "Derived claim references an unknown or invalid input claim.",
+                        detail={"claim_id": claim_id, "input_claim_id": missing_inputs[0]},
+                    )
+                )
+                del pending[claim_id]
+                progressed = True
+                continue
+
+            if any(input_claim_id in pending for input_claim_id in input_claim_ids):
+                continue
+
+            claim_diagnostics = _validate_derived_claim(
+                claim=claim,
+                accepted_values=accepted_values,
+                accepted_value_types=accepted_value_types,
+            )
+            diagnostics.extend(claim_diagnostics)
+            if not claim_diagnostics:
+                accepted_values[claim_id] = claim.get("value")
+                accepted_value_types[claim_id] = str(claim.get("value_type"))
+            del pending[claim_id]
+            progressed = True
+
+        if not progressed:
+            diagnostics.append(
+                AnalysisDiagnostic(
+                    CODE_DERIVED_UNKNOWN_INPUT,
+                    "Derived claim dependency graph contains an unresolved cycle.",
+                    detail={"claim_ids": sorted(pending)},
+                )
+            )
+            break
+
+    return diagnostics
+
+
 def _validate_derived_claim(
     *,
     claim: dict[str, Any],
-    all_claims_by_id: dict[str, dict[str, Any]],
     accepted_values: dict[str, Any],
     accepted_value_types: dict[str, str],
 ) -> list[AnalysisDiagnostic]:
@@ -612,15 +689,6 @@ def _validate_derived_claim(
         ]
 
     for input_claim_id in input_claim_ids:
-        input_claim = all_claims_by_id.get(input_claim_id)
-        if input_claim is None or input_claim_id not in accepted_values:
-            return [
-                AnalysisDiagnostic(
-                    CODE_DERIVED_UNKNOWN_INPUT,
-                    "Derived claim references an unknown or invalid input claim.",
-                    detail={"claim_id": claim_id, "input_claim_id": input_claim_id},
-                )
-            ]
         if accepted_value_types.get(input_claim_id) not in {"number", "integer"}:
             return [
                 AnalysisDiagnostic(

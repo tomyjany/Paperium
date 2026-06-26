@@ -52,23 +52,7 @@ MANIFEST = ROOT / "tests/golden/minimal-research-repo/paper/work/manifest.json"
 
 
 def _load_json(path: Path) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("artifact_type") == "experiment_analysis":
-        _add_default_analysis_adapter_metadata(data)
-    return data
-
-
-def _add_default_analysis_adapter_metadata(analysis: dict) -> None:
-    for claim in analysis.get("claims", []):
-        if not isinstance(claim, dict) or claim.get("claim_type") != "measured_value":
-            continue
-        source = claim.get("source")
-        if not isinstance(source, dict):
-            continue
-        source_path = source.get("path")
-        if isinstance(source_path, str) and source_path.endswith(".json"):
-            source.setdefault("adapter", "json")
-            source.setdefault("adapter_version", "1")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _success_analysis() -> dict:
@@ -281,6 +265,14 @@ def test_accepts_measured_claim_matching_canonical_facts():
     assert _diagnostics(_success_analysis()) == []
 
 
+def test_accepts_schema_valid_success_fixture_without_analysis_adapter_metadata():
+    analysis = _load_json(ANALYSIS_FIXTURES / "exp001-success.json")
+    assert "adapter" not in analysis["claims"][0]["source"]
+    assert "adapter_version" not in analysis["claims"][0]["source"]
+
+    assert _diagnostics(analysis) == []
+
+
 def test_accepts_measured_claim_matching_observed_values():
     evidence = _success_evidence()
     evidence["observed_values"] = [copy.deepcopy(evidence["canonical_facts"][0])]
@@ -377,8 +369,8 @@ def test_rejects_source_kind_other_than_json_or_yaml():
     claim["source"]["source_hash"] = (
         "sha256:bd8b54158667cfd139740a854a3f3e3f19b642ebb19fd77e7dee0e1c7e6f96cc"
     )
-    claim["source"].pop("adapter")
-    claim["source"].pop("adapter_version")
+    claim["source"].pop("adapter", None)
+    claim["source"].pop("adapter_version", None)
     evidence = _success_evidence()
     evidence["canonical_facts"][0]["source"] = copy.deepcopy(claim["source"])
 
@@ -595,6 +587,67 @@ def test_rejects_non_exact_rounded_division():
     assert _only_code(analysis, evidence) == CODE_DERIVED_INEXACT_DIVISION
 
 
+def test_accepts_derived_claims_before_their_derived_inputs():
+    analysis = _success_analysis()
+    base_claim = analysis["claims"][0]["claim_id"]
+    analysis["claims"].extend(
+        [
+            {
+                "claim_id": "throughput_identity_scaled",
+                "claim_type": "derived_value",
+                "label": "Throughput identity scaled",
+                "value": 1,
+                "value_type": "integer",
+                "unit": None,
+                "formula": "throughput_identity_percent / 100",
+                "input_claim_ids": ["throughput_identity_percent"],
+            },
+            {
+                "claim_id": "throughput_identity_percent",
+                "claim_type": "derived_value",
+                "label": "Throughput identity percent",
+                "value": 100,
+                "value_type": "integer",
+                "unit": "%",
+                "formula": f"{base_claim} / {base_claim} * 100",
+                "input_claim_ids": [base_claim],
+            },
+        ]
+    )
+
+    assert _diagnostics(analysis) == []
+
+
+def test_rejects_derived_claim_cycles_deterministically():
+    analysis = _success_analysis()
+    analysis["claims"].extend(
+        [
+            {
+                "claim_id": "cycle_a",
+                "claim_type": "derived_value",
+                "label": "Cycle A",
+                "value": 1,
+                "value_type": "integer",
+                "unit": None,
+                "formula": "cycle_b",
+                "input_claim_ids": ["cycle_b"],
+            },
+            {
+                "claim_id": "cycle_b",
+                "claim_type": "derived_value",
+                "label": "Cycle B",
+                "value": 1,
+                "value_type": "integer",
+                "unit": None,
+                "formula": "cycle_a",
+                "input_claim_ids": ["cycle_a"],
+            },
+        ]
+    )
+
+    assert _only_code(analysis) == CODE_DERIVED_UNKNOWN_INPUT
+
+
 def test_rejects_derived_integer_claim_with_non_integral_exact_result():
     analysis = _success_analysis()
     schema_version_claim = copy.deepcopy(analysis["claims"][0])
@@ -669,6 +722,30 @@ def test_rejects_symlink_escape_source_paths(tmp_path):
     claim["source"] = {
         "path": "questions/q001-throughput/experiments/exp001-completed/link.json",
         "source_hash": "sha256:a4fa6f4ef48ef6d8aa15648d3e396aff306c7f1d84d8572b8544369ad02b07a5",
+        "selector_type": "json_pointer",
+        "selector": "/value",
+    }
+    evidence = _success_evidence()
+    evidence["canonical_facts"][0]["source"] = copy.deepcopy(claim["source"])
+
+    assert _only_code(analysis, evidence, repo) == CODE_SOURCE_SYMLINK_OUTSIDE_EXPERIMENT
+
+
+def test_rejects_symlink_escape_source_paths_outside_repo_without_raising(tmp_path):
+    repo = tmp_path / "repo"
+    experiment = repo / "questions/q001-throughput/experiments/exp001-completed"
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True)
+    outside_source = outside / "source.json"
+    outside_source.write_text('{"value": 42.5}\n', encoding="utf-8")
+    experiment.mkdir(parents=True)
+    (experiment / "link.json").symlink_to(outside_source)
+
+    analysis = _success_analysis()
+    claim = analysis["claims"][0]
+    claim["source"] = {
+        "path": "questions/q001-throughput/experiments/exp001-completed/link.json",
+        "source_hash": sha256_file(outside_source),
         "selector_type": "json_pointer",
         "selector": "/value",
     }
