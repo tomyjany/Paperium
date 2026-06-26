@@ -1058,6 +1058,7 @@ def test_accepted_analysis_freshness_is_stale_when_evidence_packet_changes(tmp_p
     assert accepted.status == "accepted"
     assert freshness.fresh is False
     assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.diagnostic_code == "stale_evidence"
     assert freshness.diagnostic_codes == ["stale_evidence"]
 
 

@@ -69,6 +69,10 @@ class AcceptedAnalysisFreshness:
     fresh: bool
     diagnostic_codes: list[str]
 
+    @property
+    def diagnostic_code(self) -> str | None:
+        return self.diagnostic_codes[0] if self.diagnostic_codes else None
+
 
 class _PathResult(NamedTuple):
     path: str | None
