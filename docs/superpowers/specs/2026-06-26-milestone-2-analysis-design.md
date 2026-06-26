@@ -233,6 +233,15 @@ Concrete field bounds:
 - `limitations`: at most 10 entries
 - `claims`: at most 50 entries
 - failure `diagnostics`: at most 20 entries
+- `claim_id`: 1 to 80 ASCII characters matching
+  `^[A-Za-z_][A-Za-z0-9_]*$`
+- `label`: 1 to 160 Unicode code points
+- `unit`: null or 1 to 80 Unicode code points
+- `formula`: 1 to 300 ASCII characters
+- `input_claim_ids`: 1 to 20 unique entries
+
+Claim IDs deliberately use an identifier grammar rather than hyphenated names
+so the formula parser can distinguish claim symbols from subtraction.
 
 ## Claim Validation
 
@@ -298,7 +307,7 @@ Derived claims require:
 - `value_type: "number"` or `value_type: "integer"`
 - optional `unit`
 - `formula`
-- `input_claim_ids`
+- `input_claim_ids`, with at least one entry
 
 Validation rules:
 
@@ -530,6 +539,10 @@ Backend-specific options:
 --codex-bin PATH          optional, defaults to codex
 --timeout-seconds N       optional bounded subprocess timeout
 ```
+
+`--timeout-seconds` defaults to `600`, has a minimum of `1`, and has a maximum
+of `7200`. The timeout applies to the Codex subprocess only; fake backend reads
+should remain ordinary file I/O and should not use this timeout.
 
 The real backend is explicit. There is no hidden default that can launch an LLM
 call by accident.
