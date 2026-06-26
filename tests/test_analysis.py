@@ -20,6 +20,7 @@ MANIFEST_PATH = Path("paper/work/manifest.json")
 COMPLETED_EXPERIMENT = "questions/q001-throughput/experiments/exp001-completed"
 CONFLICT_EXPERIMENT = "questions/q001-throughput/experiments/exp003-structured-conflict"
 PREVIEWS_ONLY_EXPERIMENT = "questions/q001-throughput/experiments/exp005-unsupported-and-previews"
+_NO_EXISTING_STATE = object()
 
 
 class AcceptingBackend:
@@ -37,7 +38,8 @@ def _run_analysis_prerequisites(repo: Path) -> dict[str, Any]:
     assert inventoried.returncode == 0, inventoried.stderr
     normalized = run_paperctl(repo, "normalize")
     assert normalized.returncode == 0, normalized.stderr
-    return read_json(repo / MANIFEST_PATH)
+    config = yaml.safe_load((repo / "paper.yaml").read_text(encoding="utf-8"))
+    return read_json(repo / config["paper"]["work_directory"] / "manifest.json")
 
 
 def _manifest_entry(repo: Path, experiment_path: str) -> dict[str, Any]:
@@ -69,7 +71,7 @@ def _assert_preflight_failure(
     *,
     experiment_path: str = COMPLETED_EXPERIMENT,
     diagnostic_code: str,
-    existing_state: bytes | None = None,
+    existing_state: bytes | object = _NO_EXISTING_STATE,
 ) -> None:
     backend = AcceptingBackend()
 
@@ -81,23 +83,33 @@ def _assert_preflight_failure(
     assert result.diagnostic_codes == [diagnostic_code]
     assert backend.calls == 0
     path = _analysis_path(repo, experiment_path)
-    if existing_state is None:
+    if existing_state is _NO_EXISTING_STATE:
         assert not path.exists()
     else:
         assert path.read_bytes() == existing_state
+
+
+def _assert_preflight_preserves_existing_state(
+    repo: Path,
+    *,
+    experiment_path: str = COMPLETED_EXPERIMENT,
+    diagnostic_code: str,
+) -> None:
+    existing = _write_existing_analysis_state(repo, experiment_path)
+
+    _assert_preflight_failure(
+        repo,
+        experiment_path=experiment_path,
+        diagnostic_code=diagnostic_code,
+        existing_state=existing,
+    )
 
 
 def test_analysis_preflight_missing_manifest_fails_before_backend_and_does_not_write_state(
     tmp_path,
 ):
     repo = copy_fixture_repo(tmp_path)
-    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
-
-    _assert_preflight_failure(
-        repo,
-        diagnostic_code="missing_manifest",
-        existing_state=existing,
-    )
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="missing_manifest")
 
 
 def test_analysis_preflight_malformed_manifest_fails_before_backend_and_preserves_state(
@@ -105,14 +117,9 @@ def test_analysis_preflight_malformed_manifest_fails_before_backend_and_preserve
 ):
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
-    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
     (repo / MANIFEST_PATH).write_text("{", encoding="utf-8")
 
-    _assert_preflight_failure(
-        repo,
-        diagnostic_code="malformed_manifest",
-        existing_state=existing,
-    )
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="malformed_manifest")
 
 
 def test_analysis_preflight_stale_manifest_fails_before_backend_and_preserves_state(
@@ -120,16 +127,11 @@ def test_analysis_preflight_stale_manifest_fails_before_backend_and_preserves_st
 ):
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
-    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
     late = repo / "questions/q001-throughput/experiments/exp999-late"
     late.mkdir()
     (late / "README.md").write_text("# Late\n", encoding="utf-8")
 
-    _assert_preflight_failure(
-        repo,
-        diagnostic_code="stale_manifest",
-        existing_state=existing,
-    )
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="stale_manifest")
 
 
 def test_analysis_preflight_experiment_not_found_fails_before_backend_and_does_not_write_state(
@@ -138,7 +140,7 @@ def test_analysis_preflight_experiment_not_found_fails_before_backend_and_does_n
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
 
-    _assert_preflight_failure(
+    _assert_preflight_preserves_existing_state(
         repo,
         experiment_path="questions/q001-throughput/experiments/missing-experiment",
         diagnostic_code="experiment_not_found",
@@ -158,10 +160,7 @@ def test_analysis_preflight_duplicate_manifest_experiment_path_fails_before_back
 
     monkeypatch.setattr("paperctl.inventory.load_manifest", duplicate_manifest)
 
-    _assert_preflight_failure(
-        repo,
-        diagnostic_code="duplicate_experiment",
-    )
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="duplicate_experiment")
 
 
 def test_analysis_preflight_missing_inventory_fails_before_backend_and_does_not_write_state(
@@ -172,7 +171,7 @@ def test_analysis_preflight_missing_inventory_fails_before_backend_and_does_not_
     entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
     (repo / entry["inventory_path"]).unlink()
 
-    _assert_preflight_failure(repo, diagnostic_code="missing_inventory")
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="missing_inventory")
 
 
 def test_analysis_preflight_malformed_inventory_fails_before_backend_and_does_not_write_state(
@@ -183,7 +182,7 @@ def test_analysis_preflight_malformed_inventory_fails_before_backend_and_does_no
     entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
     (repo / entry["inventory_path"]).write_text("{", encoding="utf-8")
 
-    _assert_preflight_failure(repo, diagnostic_code="malformed_inventory")
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="malformed_inventory")
 
 
 def test_analysis_preflight_missing_evidence_fails_before_backend_and_does_not_write_state(
@@ -194,7 +193,7 @@ def test_analysis_preflight_missing_evidence_fails_before_backend_and_does_not_w
     entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
     (repo / entry["evidence_path"]).unlink()
 
-    _assert_preflight_failure(repo, diagnostic_code="missing_evidence")
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="missing_evidence")
 
 
 def test_analysis_preflight_malformed_evidence_fails_before_backend_and_does_not_write_state(
@@ -205,7 +204,7 @@ def test_analysis_preflight_malformed_evidence_fails_before_backend_and_does_not
     entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
     (repo / entry["evidence_path"]).write_text("{", encoding="utf-8")
 
-    _assert_preflight_failure(repo, diagnostic_code="malformed_evidence")
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="malformed_evidence")
 
 
 def test_analysis_preflight_stale_inventory_fails_before_backend_and_preserves_state(
@@ -213,15 +212,10 @@ def test_analysis_preflight_stale_inventory_fails_before_backend_and_preserves_s
 ):
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
-    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
     late = repo / COMPLETED_EXPERIMENT / "outputs/late.json"
     late.write_text('{"late": true}\n', encoding="utf-8")
 
-    _assert_preflight_failure(
-        repo,
-        diagnostic_code="stale_inventory",
-        existing_state=existing,
-    )
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="stale_inventory")
 
 
 def test_analysis_preflight_stale_evidence_fails_before_backend_and_preserves_state(
@@ -229,17 +223,12 @@ def test_analysis_preflight_stale_evidence_fails_before_backend_and_preserves_st
 ):
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
-    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
     entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
     packet = read_json(repo / entry["evidence_path"])
     packet["canonical_facts"][0]["value"] = 999
     _write_json(repo / entry["evidence_path"], packet)
 
-    _assert_preflight_failure(
-        repo,
-        diagnostic_code="stale_evidence",
-        existing_state=existing,
-    )
+    _assert_preflight_preserves_existing_state(repo, diagnostic_code="stale_evidence")
 
 
 def test_analysis_preflight_blocked_disposition_fails_before_backend(tmp_path):
@@ -248,7 +237,7 @@ def test_analysis_preflight_blocked_disposition_fails_before_backend(tmp_path):
     blocked.mkdir()
     _run_analysis_prerequisites(repo)
 
-    _assert_preflight_failure(
+    _assert_preflight_preserves_existing_state(
         repo,
         experiment_path="questions/q001-throughput/experiments/exp999-empty",
         diagnostic_code="blocked_experiment",
@@ -259,7 +248,7 @@ def test_analysis_preflight_needs_human_review_disposition_fails_before_backend(
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
 
-    _assert_preflight_failure(
+    _assert_preflight_preserves_existing_state(
         repo,
         experiment_path=CONFLICT_EXPERIMENT,
         diagnostic_code="needs_human_review",
@@ -272,11 +261,89 @@ def test_analysis_preflight_no_claimable_structured_evidence_fails_before_backen
     repo = copy_fixture_repo(tmp_path)
     _run_analysis_prerequisites(repo)
 
-    _assert_preflight_failure(
+    _assert_preflight_preserves_existing_state(
         repo,
         experiment_path=PREVIEWS_ONLY_EXPERIMENT,
         diagnostic_code="no_claimable_structured_evidence",
     )
+
+
+def test_analysis_preflight_non_candidate_disposition_fails_before_backend_and_preserves_state(
+    tmp_path, monkeypatch
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    packet = read_json(repo / entry["evidence_path"])
+    packet["preanalysis_disposition"] = "superseded"
+
+    monkeypatch.setattr("paperctl.analysis._load_evidence", lambda _repo, _entry: packet)
+    monkeypatch.setattr(
+        "paperctl.analysis._evidence_freshness_diagnostic",
+        lambda *_args, **_kwargs: None,
+    )
+
+    _assert_preflight_preserves_existing_state(
+        repo,
+        diagnostic_code="non_candidate_experiment",
+    )
+
+
+def test_analysis_preflight_unsafe_analysis_path_rejects_symlink_parent_before_backend(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    target = repo / "outside-analyses"
+    target.mkdir()
+    symlink_parent = repo / "paper/work/analyses/questions"
+    symlink_parent.parent.mkdir(parents=True, exist_ok=True)
+    symlink_parent.symlink_to(target, target_is_directory=True)
+    mirrored_state = target / "q001-throughput/experiments/exp001-completed.json"
+    mirrored_state.parent.mkdir(parents=True)
+    existing = b'{"existing":true}\n'
+    mirrored_state.write_bytes(existing)
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="unsafe_analysis_path",
+        existing_state=existing,
+    )
+    assert symlink_parent.is_symlink()
+
+
+def test_analysis_preflight_unsafe_analysis_path_rejects_final_symlink_before_backend(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    analysis_path = _analysis_path(repo, COMPLETED_EXPERIMENT)
+    analysis_path.parent.mkdir(parents=True, exist_ok=True)
+    target = repo / "outside-analysis.json"
+    existing = b'{"existing":true}\n'
+    target.write_bytes(existing)
+    analysis_path.symlink_to(target)
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="unsafe_analysis_path",
+        existing_state=existing,
+    )
+    assert analysis_path.is_symlink()
+
+
+def test_analysis_preflight_unsafe_analysis_path_rejects_parent_file_collision_before_backend(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    collision = repo / "paper/work/analyses/questions"
+    collision.parent.mkdir(parents=True, exist_ok=True)
+    existing = b"not a directory\n"
+    collision.write_bytes(existing)
+
+    _assert_preflight_failure(repo, diagnostic_code="unsafe_analysis_path")
+    assert collision.read_bytes() == existing
 
 
 def test_analysis_preflight_output_path_mirrors_experiment_path_without_experiments_assumption(
@@ -323,8 +390,31 @@ def test_analysis_preflight_output_path_mirrors_experiment_path_without_experime
     assert result.analysis_path == (
         "paper/work/analyses/questions/q001-throughput/custom-runs/exp001.json"
     )
-    assert result.diagnostic_codes == []
-    assert backend.calls == 1
+    assert result.diagnostic_codes == ["analysis_not_run"]
+    assert backend.calls == 0
+    assert not (repo / result.analysis_path).exists()
+
+
+def test_analysis_preflight_output_path_uses_custom_work_directory_without_backend(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config_path = repo / "paper.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["paper"]["work_directory"] = "custom-paper/work"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    _run_analysis_prerequisites(repo)
+    backend = AcceptingBackend()
+
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+
+    assert result.experiment_path == COMPLETED_EXPERIMENT
+    assert result.status == "failed"
+    assert result.analysis_path == (
+        "custom-paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
+    )
+    assert result.diagnostic_codes == ["analysis_not_run"]
+    assert backend.calls == 0
     assert not (repo / result.analysis_path).exists()
 
 

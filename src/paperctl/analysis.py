@@ -75,20 +75,11 @@ def analyze_experiment(repo: Path, experiment: str, backend: object | None = Non
     if analysis_path is None:
         raise AnalysisError("analysis output path resolution returned no path or diagnostic")
 
-    if backend is not None:
-        _invoke_backend(
-            backend=backend,
-            repo=repo,
-            config=config,
-            manifest_entry=manifest_entry,
-            evidence_packet=evidence_packet,
-        )
-
     return AnalyzeResult(
         experiment_path=experiment,
         analysis_path=analysis_path,
         status="failed",
-        diagnostic_codes=[],
+        diagnostic_codes=["analysis_not_run"],
     )
 
 
@@ -186,11 +177,13 @@ def _evidence_freshness_diagnostic(
 
 def _disposition_diagnostic(evidence_packet: dict) -> str | None:
     disposition = evidence_packet.get("preanalysis_disposition")
+    if disposition == "analysis_candidate":
+        return None
     if disposition == "blocked":
         return "blocked_experiment"
     if disposition == "needs_human_review":
         return "needs_human_review"
-    return None
+    return "non_candidate_experiment"
 
 
 def _has_claimable_structured_evidence(evidence_packet: dict) -> bool:
