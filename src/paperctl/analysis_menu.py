@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import select
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,13 +61,26 @@ def build_experiment_menu_rows(
 
 
 def build_experiment_menu_groups(rows: list[ExperimentMenuRow]) -> list[ExperimentMenuGroup]:
-    grouped: dict[str, list[ExperimentMenuRow]] = {}
+    groups: list[ExperimentMenuGroup] = []
+    current_question: str | None = None
+    current_rows: list[ExperimentMenuRow] = []
     for row in rows:
-        grouped.setdefault(row.question_path, []).append(row)
-    return [
-        ExperimentMenuGroup(question_path=question_path, rows=tuple(group_rows))
-        for question_path, group_rows in grouped.items()
-    ]
+        if row.question_path != current_question:
+            if current_question is not None:
+                groups.append(
+                    ExperimentMenuGroup(
+                        question_path=current_question,
+                        rows=tuple(current_rows),
+                    )
+                )
+            current_question = row.question_path
+            current_rows = []
+        current_rows.append(row)
+    if current_question is not None:
+        groups.append(
+            ExperimentMenuGroup(question_path=current_question, rows=tuple(current_rows))
+        )
+    return groups
 
 
 def load_experiment_menu_rows(repo: Path, config: dict[str, Any]) -> list[ExperimentMenuRow]:
@@ -128,12 +142,15 @@ def run_checkbox_menu(
         if key in {"escape", "q"}:
             raise ExperimentMenuError("experiment menu cancelled")
         if key in {"enter", "\n", "\r"}:
-            return [
+            selected_paths = [
                 row.experiment_path
                 for row in rows
                 if row.enabled and row.experiment_path in selected
             ]
-        if key == " " and rows[current].enabled:
+            if not selected_paths:
+                raise ExperimentMenuError("no experiments selected")
+            return selected_paths
+        if key in {" ", "space"} and rows[current].enabled:
             experiment_path = rows[current].experiment_path
             if experiment_path in selected:
                 selected.remove(experiment_path)
@@ -167,16 +184,8 @@ def _pure_disabled_reasons(
     if stale:
         return ("stale_evidence",)
     disposition = evidence_packet.get("preanalysis_disposition")
-    if disposition == "blocked":
-        return ("blocked_experiment",)
-    if disposition == "needs_human_review":
-        return ("needs_human_review",)
     if disposition != "analysis_candidate":
-        return ("non_candidate_experiment",)
-    if evidence_packet.get("experiment_path") != manifest_entry.get("experiment_path"):
-        return ("malformed_evidence",)
-    if not _has_claimable_structured_evidence(evidence_packet):
-        return ("no_claimable_structured_evidence",)
+        return (str(disposition or "non_candidate_experiment"),)
     return ()
 
 
@@ -250,6 +259,8 @@ def _read_tty_key() -> str:
         tty.setcbreak(fd)
         char = sys.stdin.read(1)
         if char == "\x1b":
+            if not select.select([sys.stdin], [], [], 0)[0]:
+                return "escape"
             suffix = sys.stdin.read(2)
             if suffix == "[A":
                 return "up"

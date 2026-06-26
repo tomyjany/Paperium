@@ -347,6 +347,25 @@ def test_analyze_experiments_menu_selected_paths_are_passed_to_batch_runner(
     assert calls[0][2]["jobs"] == 3
 
 
+def test_analyze_experiments_menu_rejects_empty_selection(monkeypatch, tmp_path, capsys):
+    from paperctl import cli
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("analyze_experiments should not be invoked")
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "load_config", lambda repo: {"loaded": True})
+    monkeypatch.setattr(cli, "choose_experiments_interactively", lambda repo, config: [])
+    monkeypatch.setattr(cli, "analyze_experiments", fail_if_called)
+
+    exit_code = cli.main(["--repo", str(tmp_path), "analyze", "--experiments-menu"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 4
+    assert "no experiments selected" in captured.err
+
+
 @pytest.mark.parametrize("jobs", ["0", "-1"])
 def test_analyze_jobs_must_be_positive(monkeypatch, tmp_path, capsys, jobs):
     from paperctl import cli

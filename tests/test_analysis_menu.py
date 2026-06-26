@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -103,11 +102,12 @@ def _run_prerequisites(repo: Path) -> None:
 def test_build_rows_preserves_manifest_order_and_disables_missing_evidence():
     first = _entry("questions/q001", "questions/q001/experiments/exp001")
     second = _entry("questions/q001", "questions/q001/experiments/exp002")
+    minimal_candidate = {"preanalysis_disposition": "analysis_candidate"}
     manifest = _manifest([first, second])
 
     rows = build_experiment_menu_rows(
         manifest,
-        {first["evidence_path"]: _candidate_packet(first)},
+        {first["evidence_path"]: minimal_candidate},
     )
 
     assert rows == [
@@ -131,28 +131,30 @@ def test_build_rows_preserves_manifest_order_and_disables_missing_evidence():
 def test_build_rows_disables_blocked_stale_and_unclaimable_evidence():
     blocked = _entry("questions/q001", "questions/q001/experiments/blocked")
     stale = _entry("questions/q001", "questions/q001/experiments/stale")
-    unclaimable = _entry("questions/q001", "questions/q001/experiments/unclaimable")
+    superseded = _entry("questions/q001", "questions/q001/experiments/superseded")
     blocked_packet = _candidate_packet(blocked)
     blocked_packet["preanalysis_disposition"] = "blocked"
+    superseded_packet = _candidate_packet(superseded)
+    superseded_packet["preanalysis_disposition"] = "superseded"
 
     rows = build_experiment_menu_rows(
-        _manifest([blocked, stale, unclaimable]),
+        _manifest([blocked, stale, superseded]),
         {
             blocked["evidence_path"]: blocked_packet,
             stale["evidence_path"]: _candidate_packet(stale),
-            unclaimable["evidence_path"]: _candidate_packet(unclaimable, facts=False),
+            superseded["evidence_path"]: superseded_packet,
         },
         stale_evidence_paths={stale["evidence_path"]},
     )
 
     assert [(row.experiment_path, row.enabled, row.disabled_reasons) for row in rows] == [
-        (blocked["experiment_path"], False, ("blocked_experiment",)),
+        (blocked["experiment_path"], False, ("blocked",)),
         (stale["experiment_path"], False, ("stale_evidence",)),
-        (unclaimable["experiment_path"], False, ("no_claimable_structured_evidence",)),
+        (superseded["experiment_path"], False, ("superseded",)),
     ]
 
 
-def test_build_groups_preserves_first_seen_question_order():
+def test_build_groups_preserves_adjacent_question_groups():
     rows = [
         ExperimentMenuRow("questions/q002", "questions/q002/experiments/a", "a.json"),
         ExperimentMenuRow("questions/q001", "questions/q001/experiments/a", "b.json"),
@@ -161,10 +163,13 @@ def test_build_groups_preserves_first_seen_question_order():
 
     groups = build_experiment_menu_groups(rows)
 
-    assert [group.question_path for group in groups] == ["questions/q002", "questions/q001"]
+    assert [group.question_path for group in groups] == [
+        "questions/q002",
+        "questions/q001",
+        "questions/q002",
+    ]
     assert [row.experiment_path for row in groups[0].rows] == [
         "questions/q002/experiments/a",
-        "questions/q002/experiments/b",
     ]
 
 
@@ -181,9 +186,18 @@ def test_checkbox_menu_toggles_enabled_rows_only_and_returns_selected_paths():
         ExperimentMenuRow("questions/q001", "enabled-b", "c.json"),
     ]
 
-    selected = run_checkbox_menu(rows, input_keys=[" ", "down", " ", "down", " ", "enter"])
+    selected = run_checkbox_menu(
+        rows, input_keys=["space", "down", "space", "down", "space", "enter"]
+    )
 
     assert selected == ["enabled-a", "enabled-b"]
+
+
+def test_checkbox_menu_empty_selection_raises_menu_error():
+    rows = [ExperimentMenuRow("questions/q001", "enabled", "a.json")]
+
+    with pytest.raises(ExperimentMenuError, match="no experiments selected"):
+        run_checkbox_menu(rows, input_keys=["enter"])
 
 
 @pytest.mark.parametrize("key", ["q", "escape"])

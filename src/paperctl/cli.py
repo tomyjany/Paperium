@@ -195,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 config = load_config(repo)
                 args.experiments = choose_experiments_interactively(repo, config)
+                if not args.experiments:
+                    raise ExperimentMenuError("no experiments selected")
             except ExperimentMenuError as exc:
                 print(f"{parser.prog}: {exc}", file=sys.stderr)
                 return INVALID_INVOCATION
