@@ -45,7 +45,9 @@ CODE_DERIVED_NON_INTEGRAL_RESULT = "derived_non_integral_result"
 CODE_DERIVED_FORMULA_INVALID = "derived_formula_invalid"
 
 _ALLOWED_SOURCE_ADAPTERS = {"json", "yaml", "yml"}
-_NUMERIC_PROSE_RE = re.compile(r"(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?%?(?![A-Za-z0-9_])")
+_NUMERIC_PROSE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?%?(?![A-Za-z0-9_])"
+)
 _INVALID_POINTER_ESCAPE_RE = re.compile(r"~(?![01])")
 _SCALAR_TYPES = (str, int, float, bool, type(None))
 
@@ -583,7 +585,7 @@ def _optional_source_field_matches(
 
 def _matches_claimable(claimable: _ClaimableValue, claim: dict[str, Any]) -> bool:
     return (
-        claimable.value_type == claim.get("value_type")
+        _source_value_type_satisfies(claimable.value_type, claim.get("value_type"))
         and claimable.unit == claim.get("unit")
         and _values_equal(claimable.value, claim.get("value"), claim.get("value_type"))
     )

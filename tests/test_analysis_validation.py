@@ -426,6 +426,36 @@ def test_integer_source_may_satisfy_number_claim(tmp_path):
     assert _diagnostics(analysis, evidence, repo) == []
 
 
+def test_integer_evidence_value_type_may_satisfy_number_claim(tmp_path):
+    repo = tmp_path / "repo"
+    experiment = repo / "questions/q001-throughput/experiments/exp001-completed/outputs"
+    experiment.mkdir(parents=True)
+    raw = experiment / "integer.json"
+    raw.write_text('{"value": 42}\n', encoding="utf-8")
+
+    analysis = _success_analysis()
+    claim = analysis["claims"][0]
+    claim["value"] = 42
+    claim["value_type"] = "number"
+    claim["unit"] = None
+    claim["source"] = {
+        "path": "questions/q001-throughput/experiments/exp001-completed/outputs/integer.json",
+        "source_hash": sha256_file(raw),
+        "selector_type": "json_pointer",
+        "selector": "/value",
+    }
+    evidence = _success_evidence()
+    evidence["canonical_facts"][0] = {
+        "fact_id": "integer_value",
+        "value": 42,
+        "value_type": "integer",
+        "unit": None,
+        "source": copy.deepcopy(claim["source"]),
+    }
+
+    assert _diagnostics(analysis, evidence, repo) == []
+
+
 def test_rejects_unit_mismatch():
     analysis = _success_analysis()
     analysis["claims"][0]["unit"] = "docs/s"
@@ -475,6 +505,14 @@ def test_rejects_numeric_prose_in_scanned_top_level_fields(field):
 def test_rejects_numeric_prose_in_each_limitation():
     analysis = _success_analysis()
     analysis["limitations"] = ["The backend wrote 99% in prose."]
+
+    assert _only_code(analysis) == CODE_NUMERIC_PROSE
+
+
+@pytest.mark.parametrize("token", ["6E2", "6e-2", "-1.5e+3"])
+def test_rejects_scientific_notation_numeric_prose(token):
+    analysis = _success_analysis()
+    analysis["answer"] = f"The backend wrote {token} pages per second in prose."
 
     assert _only_code(analysis) == CODE_NUMERIC_PROSE
 
