@@ -149,17 +149,19 @@ Backend metadata object:
 - `name`: `"fake"` or `"codex-exec"`
 - `status`: `"completed"`, `"failed"`, or `"timed_out"`
 - `return_code`: integer or null
-- `stdout_preview`: bounded string or null
-- `stderr_preview`: bounded string or null
+- `stdout_preview`: string capped at 4,000 Unicode code points, or null
+- `stderr_preview`: string capped at 4,000 Unicode code points, or null
 
 Diagnostic object:
 
 - `code`: stable machine-readable string
-- `message`: short human-readable string without absolute paths
+- `message`: human-readable string capped at 1,000 Unicode code points and
+  without absolute paths
 - `path`: repo-relative path or null
 - `selector_type`: `"json_pointer"` or null
 - `selector`: selector string or null
-- `detail`: optional object for bounded structured metadata
+- `detail`: optional object for structured metadata; serialized canonical JSON
+  must be capped at 4,000 bytes
 
 Fingerprint object:
 
@@ -220,6 +222,17 @@ Allowed confidence values:
 
 The JSON Schema should reject unknown top-level properties and unknown claim
 properties. Claim IDs must be unique within one analysis.
+
+Concrete field bounds:
+
+- `title`: 1 to 160 Unicode code points
+- `objective`: 1 to 1,000 Unicode code points
+- `answer`: 1 to 1,500 Unicode code points
+- `meaning`: 1 to 1,500 Unicode code points
+- each limitation: 1 to 500 Unicode code points
+- `limitations`: at most 10 entries
+- `claims`: at most 50 entries
+- failure `diagnostics`: at most 20 entries
 
 ## Claim Validation
 
@@ -291,11 +304,14 @@ Validation rules:
 
 1. Every input claim ID exists in the same analysis.
 2. Every input claim is numeric.
-3. The formula contains only claim IDs, numeric literals, parentheses, and
+3. The set of claim ID symbols referenced in `formula` exactly equals
+   `input_claim_ids`; unused inputs and unlisted same-analysis claim references
+   fail validation.
+4. The formula contains only claim IDs, numeric literals, parentheses, and
    `+`, `-`, `*`, `/`.
-4. The formula contains no unknown symbols.
-5. Division by zero fails validation.
-6. The formula result equals the reported value.
+5. The formula contains no unknown symbols.
+6. Division by zero fails validation.
+7. The formula result equals the reported value.
 
 The implementation should evaluate formulas with a small safe parser, not
 Python `eval`.
@@ -305,6 +321,9 @@ strategy over JSON numeric string representations. A derived integer claim must
 produce an integral result. A derived number claim must compare exactly to the
 reported numeric value after decimal normalization. M2 does not support
 approximate floating-point tolerances.
+
+JSON and YAML numeric values should be converted to `Decimal` from their parsed
+canonical string representation, not from binary floating-point arithmetic.
 
 ## Backend Interface
 
@@ -331,13 +350,14 @@ class AnalysisBackend:
 
 - backend name
 - status
-- parsed response when available
-- raw output bytes or text for hashing
+- raw response bytes when available
 - bounded stdout and stderr summaries
 - return code when applicable
 
 Both real and fake backends feed the same parser, schema validator, claim
 validator, and analysis-state writer.
+Backends do not return parsed analyses; response parsing is centralized after
+backend execution so fake and real outputs follow identical parser rules.
 
 ## Implementation Units
 
