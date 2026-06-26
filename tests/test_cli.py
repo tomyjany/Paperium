@@ -141,6 +141,42 @@ def test_analyze_fake_backend_requires_fake_response_before_invocation(tmp_path)
     assert not (repo / "paper/work/analyses").exists()
 
 
+def test_analyze_missing_experiment_argument_exits_invalid_invocation(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-m", "paperctl", "--repo", str(tmp_path), "analyze"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 4
+    assert "the following arguments are required: experiment" in result.stderr
+
+
+def test_analyze_invalid_backend_choice_exits_invalid_invocation(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "paperctl",
+            "--repo",
+            str(tmp_path),
+            "analyze",
+            COMPLETED_EXPERIMENT,
+            "--backend",
+            "bad",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 4
+    assert "invalid choice: 'bad'" in result.stderr
+
+
 def test_build_uses_plain_output_when_stdout_is_captured(tmp_path):
     from paperctl import cli
 

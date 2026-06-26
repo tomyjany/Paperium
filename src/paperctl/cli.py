@@ -35,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--force", action="store_true")
     audit.add_argument("--plain", action="store_true", default=argparse.SUPPRESS)
     analyze = subparsers.add_parser("analyze")
-    analyze.add_argument("experiment")
-    analyze.add_argument("--backend", choices=["codex-exec", "fake"], default="codex-exec")
+    analyze.add_argument("experiment", nargs="?")
+    analyze.add_argument("--backend", default="codex-exec")
     analyze.add_argument("--fake-response")
     analyze.add_argument("--timeout-seconds", type=int)
     analyze.add_argument("--plain", action="store_true", default=argparse.SUPPRESS)
@@ -210,6 +210,13 @@ def _audit_exit_code(prog: str, result) -> int:
 
 
 def _validate_analyze_args(args: argparse.Namespace) -> str | None:
+    if args.experiment is None:
+        return "the following arguments are required: experiment"
+    if args.backend not in {"codex-exec", "fake"}:
+        return (
+            f"argument --backend: invalid choice: {args.backend!r} "
+            "(choose from 'codex-exec', 'fake')"
+        )
     if args.backend == "fake" and not args.fake_response:
         return "--backend fake requires --fake-response"
     if args.timeout_seconds is not None and args.timeout_seconds <= 0:
