@@ -107,6 +107,23 @@ def test_analysis_prompt_omits_absolute_paths_temp_paths_and_timestamps():
     assert "2026-06-26T12:34:56Z" not in prompt
 
 
+def test_analysis_prompt_redacts_embedded_paths_and_timestamps_in_evidence_text():
+    packet = _evidence_packet()
+    packet["diagnostics"] = [
+        "wrote temporary output to /tmp/paperctl-123/result.json",
+        "copied report from /home/tomja/Documents/work/target-repo/result.json",
+        "worker finished at 2026-06-26T12:34:56Z",
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert "/tmp/paperctl-123/result.json" not in prompt
+    assert "/home/tomja/Documents/work/target-repo/result.json" not in prompt
+    assert "2026-06-26T12:34:56Z" not in prompt
+    assert "[omitted unsafe path]" in prompt
+    assert "[omitted timestamp]" in prompt
+
+
 def test_analysis_prompt_handles_missing_question_readme_metadata():
     context = _job_context()
     context["question_readme_path"] = None

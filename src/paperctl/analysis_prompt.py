@@ -40,6 +40,10 @@ Evidence packet:
 _TIMESTAMP_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+-]+Z?)?\b",
 )
+_UNSAFE_PATH_PATTERN = re.compile(
+    r"(?<![\w.-])(?:~|/|(?:\.\./)+|tmp/)[^\s\"']*",
+    re.IGNORECASE,
+)
 
 _OMITTED_VALUE_KEYS = {
     "cwd",
@@ -119,8 +123,11 @@ def _sanitize_for_prompt(value: Any) -> Any:
     if isinstance(value, str):
         if _is_unsafe_path(value):
             return "[omitted unsafe path]"
-        if _TIMESTAMP_PATTERN.search(value):
+        if _TIMESTAMP_PATTERN.fullmatch(value):
             return "[omitted timestamp]"
+        sanitized = _UNSAFE_PATH_PATTERN.sub("[omitted unsafe path]", value)
+        sanitized = _TIMESTAMP_PATTERN.sub("[omitted timestamp]", sanitized)
+        return sanitized
     return value
 
 
