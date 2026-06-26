@@ -6,12 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import copy_fixture_repo, read_json, run_paperctl
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PAPER_BUILD_SKILL = PROJECT_ROOT / "skills" / "paper-build" / "SKILL.md"
 PAPER_BUILD_WORKFLOW = (
     PROJECT_ROOT / "skills" / "paper-build" / "references" / "milestone-1-workflow.md"
 )
+COMPLETED_EXPERIMENT = "questions/q001-throughput/experiments/exp001-completed"
+CONFLICT_EXPERIMENT = "questions/q001-throughput/experiments/exp003-structured-conflict"
+ANALYSIS_FIXTURE = PROJECT_ROOT / "tests/fixtures/analysis/exp001-success.json"
 
 
 def _console_script_command() -> list[str]:
@@ -51,11 +56,14 @@ def test_console_script_shows_help():
 
 @pytest.mark.parametrize(
     "command",
-    ["discover", "inventory", "normalize", "render", "audit", "build"],
+    ["discover", "inventory", "normalize", "render", "audit", "build", "analyze"],
 )
 def test_implemented_commands_report_missing_config_instead_of_placeholder(tmp_path, command):
+    args = [sys.executable, "-m", "paperctl", "--repo", str(tmp_path), command]
+    if command == "analyze":
+        args.append(COMPLETED_EXPERIMENT)
     result = subprocess.run(
-        [sys.executable, "-m", "paperctl", "--repo", str(tmp_path), command],
+        args,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -65,6 +73,72 @@ def test_implemented_commands_report_missing_config_instead_of_placeholder(tmp_p
     assert result.returncode == 2
     assert "missing config file: paper.yaml" in result.stderr
     assert f"command not implemented yet: {command}" not in result.stderr
+
+
+def test_analyze_fake_backend_writes_accepted_analysis_state(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    for command in ("discover", "inventory", "normalize"):
+        prerequisite = run_paperctl(repo, command)
+        assert prerequisite.returncode == 0, prerequisite.stderr
+
+    result = run_paperctl(
+        repo,
+        "analyze",
+        COMPLETED_EXPERIMENT,
+        "--backend",
+        "fake",
+        "--fake-response",
+        str(ANALYSIS_FIXTURE),
+    )
+
+    analysis_path = (
+        "paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
+    )
+    assert result.returncode == 0
+    assert f"experiment: {COMPLETED_EXPERIMENT}" in result.stdout
+    assert "status: accepted" in result.stdout
+    assert f"analysis: {analysis_path}" in result.stdout
+    assert "diagnostics: none" in result.stdout
+    state = read_json(repo / analysis_path)
+    assert state["status"] == "accepted"
+    assert state["backend"]["name"] == "fake"
+
+
+def test_analyze_preflight_failure_exits_2_without_backend_state(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    for command in ("discover", "inventory", "normalize"):
+        prerequisite = run_paperctl(repo, command)
+        assert prerequisite.returncode == 0, prerequisite.stderr
+
+    result = run_paperctl(
+        repo,
+        "analyze",
+        CONFLICT_EXPERIMENT,
+        "--backend",
+        "fake",
+        "--fake-response",
+        str(ANALYSIS_FIXTURE),
+    )
+
+    analysis_path = (
+        repo / "paper/work/analyses/questions/q001-throughput/experiments/"
+        "exp003-structured-conflict.json"
+    )
+    assert result.returncode == 2
+    assert f"experiment: {CONFLICT_EXPERIMENT}" in result.stdout
+    assert "status: preflight_failed" in result.stdout
+    assert "diagnostics: needs_human_review" in result.stdout
+    assert not analysis_path.exists()
+
+
+def test_analyze_fake_backend_requires_fake_response_before_invocation(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+
+    result = run_paperctl(repo, "analyze", COMPLETED_EXPERIMENT, "--backend", "fake")
+
+    assert result.returncode == 4
+    assert "--backend fake requires --fake-response" in result.stderr
+    assert not (repo / "paper/work/analyses").exists()
 
 
 def test_build_uses_plain_output_when_stdout_is_captured(tmp_path):

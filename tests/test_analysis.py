@@ -503,6 +503,64 @@ def test_analysis_backend_success_writes_accepted_analysis_state(tmp_path):
     _assert_valid_analysis_state(state)
 
 
+def test_analysis_backend_options_and_timeout_overrides_reach_job(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    _run_analysis_prerequisites(repo)
+
+    result = analyze_experiment(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend=backend,
+        backend_options_override={"fake_response_path": "override.json", "trace": "cli"},
+        timeout_seconds_override=17,
+    )
+
+    assert result.status == "accepted"
+    job = backend.jobs[0]
+    assert job.backend_options == {
+        "fake_response_path": "override.json",
+        "trace": "cli",
+    }
+    assert job.timeout_seconds == 17
+
+
+def test_analysis_backend_options_override_configured_options_deterministically(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config_path = repo / "paper.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["analysis"] = {
+        "backend": {
+            "fake_response_path": "configured.json",
+            "retained": "from-config",
+            "trace": "from-config",
+        },
+        "timeout_seconds": 44,
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    backend = _valid_backend()
+    _run_analysis_prerequisites(repo)
+
+    result = analyze_experiment(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend=backend,
+        backend_options_override={
+            "fake_response_path": "override.json",
+            "trace": "from-cli",
+        },
+    )
+
+    assert result.status == "accepted"
+    job = backend.jobs[0]
+    assert job.backend_options == {
+        "fake_response_path": "override.json",
+        "retained": "from-config",
+        "trace": "from-cli",
+    }
+    assert job.timeout_seconds == 44
+
+
 @pytest.mark.parametrize(
     ("backend_result", "expected_code"),
     [

@@ -72,7 +72,13 @@ _MAX_DIAGNOSTIC_MESSAGE_CHARS = 1000
 _MAX_DIAGNOSTIC_DETAIL_BYTES = 4000
 
 
-def analyze_experiment(repo: Path, experiment: str, backend: object | None = None) -> AnalyzeResult:
+def analyze_experiment(
+    repo: Path,
+    experiment: str,
+    backend: object | None = None,
+    backend_options_override: dict[str, Any] | None = None,
+    timeout_seconds_override: int | None = None,
+) -> AnalyzeResult:
     repo = repo.resolve()
     config = config_module.load_config(repo)
     manifest_path = f"{config['paper']['work_directory']}/manifest.json"
@@ -127,6 +133,8 @@ def analyze_experiment(repo: Path, experiment: str, backend: object | None = Non
             evidence_packet=evidence_packet,
             analysis_path=analysis_path,
             backend=backend,
+            backend_options_override=backend_options_override,
+            timeout_seconds_override=timeout_seconds_override,
         )
 
     return AnalyzeResult(
@@ -262,6 +270,8 @@ def _run_backend_analysis(
     evidence_packet: dict[str, Any],
     analysis_path: str,
     backend: object,
+    backend_options_override: dict[str, Any] | None = None,
+    timeout_seconds_override: int | None = None,
 ) -> AnalyzeResult:
     experiment_path = manifest_entry["experiment_path"]
     question_path = manifest_entry["question_path"]
@@ -280,8 +290,8 @@ def _run_backend_analysis(
         },
         evidence_packet,
     )
-    backend_options = _analysis_backend_config(config)
-    timeout_seconds = _analysis_timeout_seconds(config)
+    backend_options = _effective_backend_options(config, backend_options_override)
+    timeout_seconds = _effective_timeout_seconds(config, timeout_seconds_override)
     job = AnalysisJob(
         repo=repo,
         config=config,
@@ -825,6 +835,21 @@ def _analysis_timeout_seconds(config: dict[str, Any]) -> int:
     if isinstance(value, int) and value > 0:
         return value
     return 300
+
+
+def _effective_backend_options(
+    config: dict[str, Any], backend_options_override: dict[str, Any] | None
+) -> dict[str, Any]:
+    options = dict(_analysis_backend_config(config))
+    if backend_options_override is not None:
+        options.update(backend_options_override)
+    return options
+
+
+def _effective_timeout_seconds(config: dict[str, Any], timeout_seconds_override: int | None) -> int:
+    if timeout_seconds_override is not None:
+        return timeout_seconds_override
+    return _analysis_timeout_seconds(config)
 
 
 def _schema_resource_path(name: str) -> Path:

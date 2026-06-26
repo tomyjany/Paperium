@@ -86,6 +86,17 @@
       "properties": {
         "default_stage": { "enum": ["deterministic", "publication"] }
       }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
     }
   },
   "$defs": {

@@ -2,6 +2,8 @@ import argparse
 from pathlib import Path
 import sys
 
+from paperctl.analysis import AnalysisError, analyze_experiment
+from paperctl.analysis_backends import CodexExecBackend, FakeBackend
 from paperctl.audit import AuditError, audit
 from paperctl.build import BuildError, build
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
@@ -32,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--stage", choices=["deterministic", "publication"], default=None)
     audit.add_argument("--force", action="store_true")
     audit.add_argument("--plain", action="store_true", default=argparse.SUPPRESS)
+    analyze = subparsers.add_parser("analyze")
+    analyze.add_argument("experiment")
+    analyze.add_argument("--backend", choices=["codex-exec", "fake"], default="codex-exec")
+    analyze.add_argument("--fake-response")
+    analyze.add_argument("--timeout-seconds", type=int)
+    analyze.add_argument("--plain", action="store_true", default=argparse.SUPPRESS)
     return parser
 
 
@@ -152,6 +160,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"publication blockers: {result.blocker_count}")
         print(f"publishable: {str(result.publishable).lower()}")
         return _audit_exit_code(parser.prog, result)
+    if args.command == "analyze":
+        invalid = _validate_analyze_args(args)
+        if invalid is not None:
+            print(f"{parser.prog}: {invalid}", file=sys.stderr)
+            return INVALID_INVOCATION
+        backend = _analysis_backend(args.backend)
+        backend_options_override = _analysis_backend_options_override(args)
+        try:
+            result = analyze_experiment(
+                repo,
+                args.experiment,
+                backend=backend,
+                backend_options_override=backend_options_override,
+                timeout_seconds_override=args.timeout_seconds,
+            )
+        except (ConfigError, AnalysisError) as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return DETERMINISTIC_FAILURE
+        print(f"experiment: {result.experiment_path}")
+        print(f"status: {result.status}")
+        print(f"analysis: {result.analysis_path or 'none'}")
+        print(f"diagnostics: {_diagnostic_summary(result.diagnostic_codes)}")
+        return SUCCESS if result.status == "accepted" else DETERMINISTIC_FAILURE
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
 
@@ -176,3 +207,29 @@ def _audit_exit_code(prog: str, result) -> int:
     if result.stage == "publication" and result.publication_status != "passed":
         return PUBLICATION_BLOCKED
     return SUCCESS
+
+
+def _validate_analyze_args(args: argparse.Namespace) -> str | None:
+    if args.backend == "fake" and not args.fake_response:
+        return "--backend fake requires --fake-response"
+    if args.timeout_seconds is not None and args.timeout_seconds <= 0:
+        return "--timeout-seconds must be a positive integer"
+    return None
+
+
+def _analysis_backend(name: str):
+    if name == "fake":
+        return FakeBackend()
+    return CodexExecBackend()
+
+
+def _analysis_backend_options_override(args: argparse.Namespace) -> dict[str, str]:
+    if args.fake_response is None:
+        return {}
+    return {"fake_response_path": args.fake_response}
+
+
+def _diagnostic_summary(codes: list[str]) -> str:
+    if not codes:
+        return "none"
+    return ", ".join(codes)
