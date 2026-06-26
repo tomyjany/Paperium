@@ -104,7 +104,7 @@
         { "$ref": "#/$defs/relative_path" },
         {
           "type": "string",
-          "pattern": "^paper/work/analyses/.+\\.json$"
+          "pattern": "^.+/analyses/.+\\.json$"
         }
       ]
     },

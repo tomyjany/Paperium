@@ -7,6 +7,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from paperctl import schemas
+from paperctl._support.paths import is_repo_relative_posix
 
 
 class AnalysisStateIntegrityError(ValueError):
@@ -28,11 +29,21 @@ def validate_artifact(name: str, obj: Any) -> None:
 
 def validate_analysis_state_integrity(state: dict[str, Any]) -> None:
     experiment_path = state.get("experiment_path")
-    expected_analysis_path = f"paper/work/analyses/{experiment_path}.json"
-    if state.get("analysis_path") != expected_analysis_path:
+    analysis_path = state.get("analysis_path")
+    if not isinstance(experiment_path, str) or not isinstance(analysis_path, str):
+        raise AnalysisStateIntegrityError(
+            "analysis_state experiment_path and analysis_path must be strings"
+        )
+    if not is_repo_relative_posix(analysis_path):
+        raise AnalysisStateIntegrityError(
+            f"analysis_state analysis_path is not repo-relative POSIX: {analysis_path!r}"
+        )
+
+    expected_suffix = f"/analyses/{experiment_path}.json"
+    if not f"/{analysis_path}".endswith(expected_suffix):
         raise AnalysisStateIntegrityError(
             "analysis_state analysis_path mismatch: "
-            f"expected {expected_analysis_path!r}, got {state.get('analysis_path')!r}"
+            f"expected suffix 'analyses/{experiment_path}.json', got {analysis_path!r}"
         )
 
     if state.get("status") != "accepted":

@@ -3,10 +3,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
 from paperctl.analysis import analyze_experiment
+from paperctl.analysis_backends import AnalysisBackendResult
 from paperctl.analysis_prompt import (
     PROMPT_BUILDER_VERSION,
     PROMPT_TEMPLATE,
@@ -14,6 +16,9 @@ from paperctl.analysis_prompt import (
     build_analysis_prompt,
     prompt_template_hash,
 )
+from paperctl._support.hashing import sha256_bytes
+from paperctl._support.jsonio import dump_json_bytes
+from paperctl._support.schema import validate_analysis_state_integrity, validate_artifact
 
 
 MANIFEST_PATH = Path("paper/work/manifest.json")
@@ -29,6 +34,18 @@ class AcceptingBackend:
 
     def analyze(self, *_args: Any, **_kwargs: Any) -> None:
         self.calls += 1
+
+
+class StubBackend:
+    def __init__(self, result: AnalysisBackendResult) -> None:
+        self.result = result
+        self.calls = 0
+        self.jobs = []
+
+    def analyze(self, job: Any) -> AnalysisBackendResult:
+        self.calls += 1
+        self.jobs.append(job)
+        return self.result
 
 
 def _run_analysis_prerequisites(repo: Path) -> dict[str, Any]:
@@ -64,6 +81,53 @@ def _write_existing_analysis_state(repo: Path, experiment_path: str) -> bytes:
     existing = b'{"existing":true}\n'
     path.write_bytes(existing)
     return existing
+
+
+def _analysis_fixture_bytes(name: str = "exp001-success.json") -> bytes:
+    return Path("tests/fixtures/analysis", name).read_bytes()
+
+
+def _valid_backend(
+    *,
+    raw_response: bytes | None = None,
+    status: str = "completed",
+    backend_name: str = "fake",
+    return_code: int | None = 0,
+    stdout: str | None = None,
+    stderr: str | None = None,
+) -> StubBackend:
+    return StubBackend(
+        AnalysisBackendResult(
+            backend_name=backend_name,
+            status=status,
+            raw_response=_analysis_fixture_bytes() if raw_response is None else raw_response,
+            return_code=return_code,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    )
+
+
+def _analyze_with_backend(
+    repo: Path,
+    backend: StubBackend,
+    *,
+    experiment_path: str = COMPLETED_EXPERIMENT,
+):
+    _run_analysis_prerequisites(repo)
+    result = analyze_experiment(repo, experiment_path, backend=backend)
+    assert backend.calls == 1
+    assert result.analysis_path is not None
+    return result, read_json(repo / result.analysis_path)
+
+
+def _assert_valid_analysis_state(state: dict[str, Any]) -> None:
+    validate_artifact("analysis-state.schema.json", state)
+    validate_analysis_state_integrity(state)
+
+
+def _diagnostic_codes(state: dict[str, Any]) -> list[str]:
+    return [diagnostic["code"] for diagnostic in state["diagnostics"]]
 
 
 def _assert_preflight_failure(
@@ -379,12 +443,11 @@ def test_analysis_preflight_output_path_mirrors_experiment_path_without_experime
             (custom / child.name).write_bytes(child.read_bytes())
 
     _run_analysis_prerequisites(repo)
-    backend = AcceptingBackend()
 
     result = analyze_experiment(
         repo,
         "questions/q001-throughput/custom-runs/exp001",
-        backend=backend,
+        backend=None,
     )
 
     assert result.experiment_path == "questions/q001-throughput/custom-runs/exp001"
@@ -393,7 +456,6 @@ def test_analysis_preflight_output_path_mirrors_experiment_path_without_experime
         "paper/work/analyses/questions/q001-throughput/custom-runs/exp001.json"
     )
     assert result.diagnostic_codes == ["analysis_not_run"]
-    assert backend.calls == 0
     assert not (repo / result.analysis_path).exists()
 
 
@@ -406,9 +468,8 @@ def test_analysis_preflight_output_path_uses_custom_work_directory_without_backe
     config["paper"]["work_directory"] = "custom-paper/work"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     _run_analysis_prerequisites(repo)
-    backend = AcceptingBackend()
 
-    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=None)
 
     assert result.experiment_path == COMPLETED_EXPERIMENT
     assert result.status == "failed"
@@ -416,8 +477,355 @@ def test_analysis_preflight_output_path_uses_custom_work_directory_without_backe
         "custom-paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
     )
     assert result.diagnostic_codes == ["analysis_not_run"]
-    assert backend.calls == 0
     assert not (repo / result.analysis_path).exists()
+
+
+def test_analysis_backend_success_writes_accepted_analysis_state(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend(stdout="ignored stdout", stderr="ignored stderr")
+
+    result, state = _analyze_with_backend(repo, backend)
+
+    assert result.status == "accepted"
+    assert result.diagnostic_codes == []
+    assert state["status"] == "accepted"
+    assert state["analysis"]["artifact_type"] == "experiment_analysis"
+    assert state["diagnostics"] == []
+    assert state["raw_output_sha256"].startswith("sha256:")
+    assert state["backend"] == {
+        "name": "fake",
+        "status": "completed",
+        "return_code": 0,
+        "stdout_preview": "ignored stdout",
+        "stderr_preview": "ignored stderr",
+    }
+    _assert_valid_analysis_state(state)
+
+
+@pytest.mark.parametrize(
+    ("backend_result", "expected_code"),
+    [
+        (
+            AnalysisBackendResult(
+                backend_name="fake",
+                status="failed",
+                raw_response=None,
+                return_code=7,
+                stdout="out",
+                stderr="worker failed",
+            ),
+            "backend_failure",
+        ),
+        (
+            AnalysisBackendResult(
+                backend_name="fake",
+                status="timed_out",
+                raw_response=None,
+                return_code=None,
+                stdout="partial out",
+                stderr="partial err",
+            ),
+            "backend_timeout",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b"", 0, None, None),
+            "empty_output",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b"\xff", 0, None, None),
+            "invalid_utf8",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b"{", 0, None, None),
+            "invalid_json",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b'["not", "object"]', 0, None, None),
+            "non_object_json",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b'"not object"', 0, None, None),
+            "non_object_json",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b"42", 0, None, None),
+            "non_object_json",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b"{}{}", 0, None, None),
+            "concatenated_json",
+        ),
+        (
+            AnalysisBackendResult("fake", "completed", b'{"schema_version":1}', 0, None, None),
+            "schema_failure",
+        ),
+        (
+            AnalysisBackendResult(
+                "fake",
+                "completed",
+                _analysis_fixture_bytes("no-measured-claim.json"),
+                0,
+                None,
+                None,
+            ),
+            "claim_validation_failure",
+        ),
+    ],
+)
+def test_analysis_backend_failures_write_failed_analysis_state(
+    tmp_path,
+    backend_result,
+    expected_code,
+):
+    repo = copy_fixture_repo(tmp_path)
+    backend = StubBackend(backend_result)
+
+    result, state = _analyze_with_backend(repo, backend)
+
+    assert result.status == "failed"
+    assert result.diagnostic_codes == [expected_code]
+    assert state["status"] == "failed"
+    assert state["analysis"] is None
+    assert _diagnostic_codes(state) == [expected_code]
+    _assert_valid_analysis_state(state)
+
+
+def test_analysis_ignores_stdout_and_stderr_json_when_backend_response_body_is_empty(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend(
+        raw_response=b"",
+        stdout=_analysis_fixture_bytes().decode("utf-8"),
+        stderr=_analysis_fixture_bytes().decode("utf-8"),
+    )
+
+    result, state = _analyze_with_backend(repo, backend)
+
+    assert result.status == "failed"
+    assert result.diagnostic_codes == ["empty_output"]
+    assert _diagnostic_codes(state) == ["empty_output"]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "codex_missing_dependency",
+        "codex_capability_missing",
+        "codex_help_failed",
+        "codex_launch_failed",
+        "codex_temp_dir_unavailable",
+    ],
+)
+def test_analysis_codex_capability_backend_failures_do_not_write_analysis_state(
+    tmp_path,
+    code,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+    backend = StubBackend(
+        AnalysisBackendResult(
+            backend_name="codex-exec",
+            status="failed",
+            raw_response=None,
+            return_code=None,
+            stdout=None,
+            stderr=f"{code}: capability failed",
+        )
+    )
+
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+
+    assert result.status == "failed"
+    assert result.analysis_path == (
+        "paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
+    )
+    assert result.diagnostic_codes == [code]
+    assert (repo / result.analysis_path).read_bytes() == existing
+
+
+def test_analysis_redacts_backend_previews_and_diagnostic_messages(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = StubBackend(
+        AnalysisBackendResult(
+            backend_name="fake",
+            status="failed",
+            raw_response=None,
+            return_code=1,
+            stdout="api_key=stdout-secret\n" + ("x" * 5000),
+            stderr='{"token": "stderr-secret"} password=diagnostic-secret',
+        )
+    )
+
+    _, state = _analyze_with_backend(repo, backend)
+
+    serialized = json.dumps(state, sort_keys=True)
+    assert "stdout-secret" not in serialized
+    assert "stderr-secret" not in serialized
+    assert "diagnostic-secret" not in serialized
+    assert "[REDACTED]" in serialized
+    assert len(state["backend"]["stdout_preview"]) == 4000
+    assert len(state["diagnostics"][0]["message"]) <= 1000
+
+
+def test_analysis_caps_diagnostic_detail_canonical_json_at_4000_bytes(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = StubBackend(
+        AnalysisBackendResult(
+            backend_name="fake",
+            status="failed",
+            raw_response=None,
+            return_code=1,
+            stdout=None,
+            stderr="backend failed " + ("x" * 10_000),
+        )
+    )
+
+    _, state = _analyze_with_backend(repo, backend)
+
+    detail = state["diagnostics"][0]["detail"]
+    assert len(dump_json_bytes(detail)) <= 4000
+
+
+def test_analysis_does_not_embed_raw_model_output_in_state(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    raw = b"not json with RAW_MODEL_OUTPUT_SHOULD_NOT_APPEAR"
+    backend = _valid_backend(raw_response=raw)
+
+    _, state = _analyze_with_backend(repo, backend)
+
+    assert state["raw_output_sha256"] is not None
+    assert "RAW_MODEL_OUTPUT_SHOULD_NOT_APPEAR" not in json.dumps(state, sort_keys=True)
+
+
+def test_analysis_raw_output_sha256_is_included_when_raw_bytes_exist(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    raw = _analysis_fixture_bytes()
+    backend = _valid_backend(raw_response=raw)
+
+    _, state = _analyze_with_backend(repo, backend)
+
+    assert state["raw_output_sha256"] == sha256_bytes(raw)
+
+
+def test_analysis_accepted_and_failed_writes_atomically_replace_latest_attempt(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    accepted_backend = _valid_backend()
+
+    accepted = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=accepted_backend)
+    accepted_state = read_json(repo / accepted.analysis_path)
+    failed_backend = _valid_backend(raw_response=b"{")
+    failed = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=failed_backend)
+    failed_state = read_json(repo / failed.analysis_path)
+
+    assert accepted_state["status"] == "accepted"
+    assert failed_state["status"] == "failed"
+    assert failed_state["analysis"] is None
+    assert failed_state != accepted_state
+    assert list((repo / failed.analysis_path).parent.glob("*.tmp")) == []
+
+
+def test_analysis_custom_work_directory_state_path_validates(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    config_path = repo / "paper.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["paper"]["work_directory"] = "custom-paper/work"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    backend = _valid_backend()
+
+    result, state = _analyze_with_backend(repo, backend)
+
+    assert result.status == "accepted"
+    assert state["analysis_path"] == (
+        "custom-paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
+    )
+    _assert_valid_analysis_state(state)
+
+
+@pytest.mark.parametrize(
+    ("target", "replacement"),
+    [
+        ("paperctl.analysis.prompt_template_hash", lambda: "sha256:" + "1" * 64),
+        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 2),
+        ("paperctl.analysis.ANALYSIS_VALIDATION_VERSION", 2),
+        ("paperctl.analysis.FORMULA_EVALUATOR_VERSION", 2),
+    ],
+)
+def test_analysis_fingerprint_changes_when_version_or_prompt_inputs_change(
+    tmp_path,
+    monkeypatch,
+    target,
+    replacement,
+):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    _, first_state = _analyze_with_backend(repo, backend)
+
+    monkeypatch.setattr(target, replacement)
+    backend = _valid_backend()
+    _, second_state = _analyze_with_backend(repo, backend)
+
+    assert (
+        first_state["fingerprint"]["fingerprint_sha256"]
+        != second_state["fingerprint"]["fingerprint_sha256"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("schema_name", "patched_schema"),
+    [
+        ("analysis-state.schema.json", {"patched": "analysis-state"}),
+        ("experiment-analysis.schema.json", {"patched": "experiment-analysis"}),
+    ],
+)
+def test_analysis_fingerprint_changes_when_schema_hash_inputs_change(
+    tmp_path,
+    monkeypatch,
+    schema_name,
+    patched_schema,
+):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    _, first_state = _analyze_with_backend(repo, backend)
+
+    from paperctl._support import schema as schema_module
+
+    real_load_schema = schema_module.load_schema
+
+    def patched_load_schema(name: str) -> dict[str, Any]:
+        if name == schema_name:
+            return patched_schema
+        return real_load_schema(name)
+
+    monkeypatch.setattr("paperctl.analysis.load_schema", patched_load_schema)
+    backend = _valid_backend()
+    _, second_state = _analyze_with_backend(repo, backend)
+
+    assert (
+        first_state["fingerprint"]["fingerprint_sha256"]
+        != second_state["fingerprint"]["fingerprint_sha256"]
+    )
+
+
+def test_analysis_fingerprint_changes_when_question_readme_hash_changes(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    _, first_state = _analyze_with_backend(repo, backend)
+    readme = repo / "questions/q001-throughput/README.md"
+    readme.write_text(readme.read_text(encoding="utf-8") + "\nAdditional context.\n")
+    assert run_paperctl(repo, "discover", "--force").returncode == 0
+    assert run_paperctl(repo, "inventory", "--force").returncode == 0
+    assert run_paperctl(repo, "normalize", "--force").returncode == 0
+    backend = _valid_backend()
+
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+    assert backend.calls == 1
+    second_state = read_json(repo / result.analysis_path)
+
+    assert (
+        first_state["fingerprint"]["fingerprint_sha256"]
+        != second_state["fingerprint"]["fingerprint_sha256"]
+    )
 
 
 def _job_context() -> dict:
