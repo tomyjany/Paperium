@@ -43,6 +43,14 @@ In Milestone 1, deterministic audit can pass while publication audit remains
 blocked. Failed validation writes `PAPER.draft.md` and the audit report for
 review instead of creating a final paper.
 
+When stdout is an interactive terminal, `build` and `audit` use Rich-formatted
+human output. Redirected output stays plain, and plain output can be forced:
+
+```bash
+uv run paperctl --repo /path/to/research-repo build --plain
+uv run paperctl --repo /path/to/research-repo audit --stage publication --plain
+```
+
 ## Development
 
 Run the smoke tests:

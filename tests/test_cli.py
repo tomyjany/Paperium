@@ -2,6 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,6 +65,93 @@ def test_implemented_commands_report_missing_config_instead_of_placeholder(tmp_p
     assert result.returncode == 2
     assert "missing config file: paper.yaml" in result.stderr
     assert f"command not implemented yet: {command}" not in result.stderr
+
+
+def test_build_uses_plain_output_when_stdout_is_captured(tmp_path):
+    from paperctl import cli
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "paperctl",
+            "--repo",
+            str(tmp_path),
+            "build",
+            "--plain",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "missing config file: paper.yaml" in result.stderr
+    assert cli.PUBLICATION_BLOCKED == 3
+
+
+def test_build_rich_output_can_be_forced_for_interactive_stdout(monkeypatch, tmp_path, capsys):
+    from paperctl import cli
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "load_config", lambda repo: {"ok": True})
+    monkeypatch.setattr(cli, "build", lambda repo, config, force=False: _build_result())
+
+    exit_code = cli.main(["--repo", str(tmp_path), "build"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "paperctl build" in output
+    assert "Deterministic Build" in output
+    assert "PAPER.draft.md" in output
+    assert "missing_semantic_analysis" in output
+
+
+def test_audit_rich_output_preserves_publication_blocked_exit(monkeypatch, tmp_path, capsys):
+    from paperctl import cli
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        cli, "load_config", lambda repo: {"audit": {"default_stage": "publication"}}
+    )
+    monkeypatch.setattr(cli, "audit", lambda repo, config, stage, force=False: _audit_result(stage))
+
+    exit_code = cli.main(["--repo", str(tmp_path), "audit", "--stage", "publication"])
+
+    assert exit_code == cli.PUBLICATION_BLOCKED
+    output = capsys.readouterr().out
+    assert "paperctl audit" in output
+    assert "Publication Gate" in output
+    assert "blocked" in output
+    assert "paper/PAPER.audit.json" in output
+
+
+def _build_result():
+    return SimpleNamespace(
+        discovery=SimpleNamespace(status="created"),
+        inventory=SimpleNamespace(created=1, replaced=0, unchanged=5),
+        normalize=SimpleNamespace(created=1, replaced=0, unchanged=5),
+        render=SimpleNamespace(status="wrote"),
+        deterministic_status="passed",
+        publication_status="blocked",
+        publication_blocker_codes=["missing_semantic_analysis"],
+        draft_path="PAPER.draft.md",
+        audit_path="paper/PAPER.audit.json",
+    )
+
+
+def _audit_result(stage: str):
+    return SimpleNamespace(
+        stage=stage,
+        write_status="wrote",
+        report_path="paper/PAPER.audit.json",
+        deterministic_status="passed",
+        publication_status="blocked",
+        publishable=False,
+        blocker_count=1,
+        issue_codes=[],
+    )
 
 
 def test_paper_build_skill_file_has_required_frontmatter():
