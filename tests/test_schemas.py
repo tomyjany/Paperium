@@ -207,8 +207,7 @@ def _experiment_analysis(**overrides):
                         "outputs/experiment_report.json"
                     ),
                     "source_hash": (
-                        "sha256:"
-                        "4bf7977e2379089b948891299acad85afb21056d02280f360549b1b4b7d86fdb"
+                        "sha256:4bf7977e2379089b948891299acad85afb21056d02280f360549b1b4b7d86fdb"
                     ),
                     "selector_type": "json_pointer",
                     "selector": "/canonical_facts/0/value",
@@ -283,8 +282,7 @@ def _analysis_state(**overrides):
         "question_path": "questions/q001-throughput",
         "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
         "analysis_path": (
-            "paper/work/analysis/questions/q001-throughput/experiments/"
-            "exp001-completed.json"
+            "paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
         ),
         "fingerprint": _analysis_fingerprint(),
         "backend": _analysis_backend(),
@@ -664,9 +662,7 @@ def test_analysis_state_fingerprint_allows_non_empty_extra_inputs():
     [
         lambda state: state.update(raw_output_sha256="sha256:" + "z" * 64),
         lambda state: state["fingerprint"].update(config_sha256="not-a-hash"),
-        lambda state: state["fingerprint"]["source_files"][0].update(
-            sha256="sha256:" + "g" * 64
-        ),
+        lambda state: state["fingerprint"]["source_files"][0].update(sha256="sha256:" + "g" * 64),
         lambda state: state["fingerprint"].update(source_files_sha256="sha256:" + "G" * 64),
         lambda state: state["fingerprint"]["prerequisite_artifacts"][0].update(
             sha256="sha256:" + "x" * 63
@@ -853,9 +849,7 @@ def test_analysis_state_diagnostic_path_and_selector_can_be_null():
         ),
         (
             _failed_analysis_state,
-            lambda state: state["fingerprint"]["prerequisite_artifacts"][0].update(
-                unexpected=True
-            ),
+            lambda state: state["fingerprint"]["prerequisite_artifacts"][0].update(unexpected=True),
         ),
         (_failed_analysis_state, lambda state: state["backend"].update(unexpected=True)),
         (_failed_analysis_state, lambda state: state["diagnostics"][0].update(unexpected=True)),
