@@ -79,6 +79,8 @@ def analyze_experiment(
     backend_options_override: dict[str, Any] | None = None,
     timeout_seconds_override: int | None = None,
 ) -> AnalyzeResult:
+    if timeout_seconds_override is not None and timeout_seconds_override <= 0:
+        raise AnalysisError("timeout_seconds_override must be positive")
     repo = repo.resolve()
     config = config_module.load_config(repo)
     manifest_path = f"{config['paper']['work_directory']}/manifest.json"

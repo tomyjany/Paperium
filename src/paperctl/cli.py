@@ -217,6 +217,8 @@ def _validate_analyze_args(args: argparse.Namespace) -> str | None:
             f"argument --backend: invalid choice: {args.backend!r} "
             "(choose from 'codex-exec', 'fake')"
         )
+    if args.fake_response is not None and args.backend != "fake":
+        return "--fake-response requires --backend fake"
     if args.backend == "fake" and not args.fake_response:
         return "--backend fake requires --fake-response"
     if args.timeout_seconds is not None and args.timeout_seconds <= 0:

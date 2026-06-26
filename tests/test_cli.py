@@ -141,6 +141,30 @@ def test_analyze_fake_backend_requires_fake_response_before_invocation(tmp_path)
     assert not (repo / "paper/work/analyses").exists()
 
 
+def test_analyze_fake_response_requires_fake_backend(monkeypatch, tmp_path, capsys):
+    from paperctl import cli
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("analyze_experiment should not be invoked")
+
+    monkeypatch.setattr(cli, "analyze_experiment", fail_if_called)
+
+    exit_code = cli.main(
+        [
+            "--repo",
+            str(tmp_path),
+            "analyze",
+            COMPLETED_EXPERIMENT,
+            "--fake-response",
+            str(ANALYSIS_FIXTURE),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 4
+    assert "--fake-response requires --backend fake" in captured.err
+
+
 def test_analyze_missing_experiment_argument_exits_invalid_invocation(tmp_path):
     result = subprocess.run(
         [sys.executable, "-m", "paperctl", "--repo", str(tmp_path), "analyze"],

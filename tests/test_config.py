@@ -105,6 +105,30 @@ def test_unknown_config_keys_fail_validation(tmp_path):
         validate_config(config, repo)
 
 
+def test_analysis_backend_config_rejects_unknown_keys(tmp_path):
+    from paperctl.config import ConfigError, default_config, validate_config
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = default_config()
+    config["analysis"] = {"backend": {"api_key": "secret"}}
+
+    with pytest.raises(ConfigError, match="api_key"):
+        validate_config(config, repo)
+
+
+def test_analysis_backend_config_rejects_non_string_fake_response_path(tmp_path):
+    from paperctl.config import ConfigError, default_config, validate_config
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = default_config()
+    config["analysis"] = {"backend": {"fake_response_path": 123}}
+
+    with pytest.raises(ConfigError, match="not of type 'string'"):
+        validate_config(config, repo)
+
+
 def test_default_config_matches_spec():
     from paperctl._support.schema import validate_artifact
     from paperctl.config import default_config

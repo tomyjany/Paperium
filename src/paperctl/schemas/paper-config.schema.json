@@ -93,7 +93,10 @@
       "properties": {
         "backend": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": false,
+          "properties": {
+            "fake_response_path": { "type": "string" }
+          }
         },
         "timeout_seconds": { "type": "integer", "minimum": 1 }
       }

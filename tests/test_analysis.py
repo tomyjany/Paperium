@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
-from paperctl.analysis import analyze_experiment
+from paperctl.analysis import AnalysisError, analyze_experiment
 from paperctl.analysis_backends import AnalysisBackendResult
 from paperctl.analysis_validation import AnalysisDiagnostic
 from paperctl.analysis_prompt import (
@@ -525,6 +525,24 @@ def test_analysis_backend_options_and_timeout_overrides_reach_job(tmp_path):
     assert job.timeout_seconds == 17
 
 
+@pytest.mark.parametrize("timeout_seconds", [0, -1])
+def test_analysis_timeout_override_rejects_non_positive_values_before_backend(
+    tmp_path, timeout_seconds
+):
+    repo = copy_fixture_repo(tmp_path)
+    backend = AcceptingBackend()
+
+    with pytest.raises(AnalysisError, match="timeout_seconds_override must be positive"):
+        analyze_experiment(
+            repo,
+            COMPLETED_EXPERIMENT,
+            backend=backend,
+            timeout_seconds_override=timeout_seconds,
+        )
+
+    assert backend.calls == 0
+
+
 def test_analysis_backend_options_override_configured_options_deterministically(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     config_path = repo / "paper.yaml"
@@ -532,8 +550,6 @@ def test_analysis_backend_options_override_configured_options_deterministically(
     config["analysis"] = {
         "backend": {
             "fake_response_path": "configured.json",
-            "retained": "from-config",
-            "trace": "from-config",
         },
         "timeout_seconds": 44,
     }
@@ -547,7 +563,6 @@ def test_analysis_backend_options_override_configured_options_deterministically(
         backend=backend,
         backend_options_override={
             "fake_response_path": "override.json",
-            "trace": "from-cli",
         },
     )
 
@@ -555,8 +570,6 @@ def test_analysis_backend_options_override_configured_options_deterministically(
     job = backend.jobs[0]
     assert job.backend_options == {
         "fake_response_path": "override.json",
-        "retained": "from-config",
-        "trace": "from-cli",
     }
     assert job.timeout_seconds == 44
 
