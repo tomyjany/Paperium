@@ -43,8 +43,9 @@ The command requires fresh deterministic prerequisites. It does not run
 - No question synthesis.
 - No technical editor.
 - No changes to `PAPER.md` publication behavior.
-- No auditing of numeric literals embedded in prose.
 - No raw model output embedded in stable analysis-state artifacts.
+- No rounded derived claims. Exact derived arithmetic only.
+- No rendering or publication of semantic analysis into `PAPER.md`.
 
 ## Inputs
 
@@ -54,6 +55,7 @@ The command requires fresh deterministic prerequisites. It does not run
 - `paper/work/manifest.json`
 - the selected experiment inventory packet
 - the selected experiment evidence packet
+- the selected question README path and hash from the manifest when available
 - files referenced by validated claim sources
 
 The selected experiment must resolve to exactly one manifest entry. M2 accepts
@@ -78,11 +80,22 @@ Exact preflight checks:
 6. Recompute the expected evidence packet for the selected manifest entry using
    current manifest, inventory, config, adapters, and source files, and compare
    canonical JSON bytes to the stored evidence packet.
+7. Require `preanalysis_disposition: "analysis_candidate"` in the evidence
+   packet. Evidence packets with `blocked` or `needs_human_review` fail preflight
+   before backend invocation.
+8. Require at least one claimable structured evidence value in the selected
+   evidence packet. For M2, claimable values are `canonical_facts` or
+   `observed_values` with JSON Pointer sources backed by JSON or YAML files.
+   Experiments with no such values fail preflight before backend invocation.
 
 Preflight failures are not analysis attempts. They do not replace an existing
 analysis-state artifact. Backend, parse, schema, or claim-validation failures
 are analysis attempts and replace the stable analysis-state artifact with
 `status: "failed"`.
+
+M2 uses latest-attempt state only. It does not preserve a
+`previous_accepted_sha256`; that can be added later if the project chooses
+last-good analysis retention.
 
 ## Output Artifact
 
@@ -168,7 +181,8 @@ Fingerprint object:
 - `stage`: object with `name: "analyze"` and integer `version`
 - `schema_version`: integer
 - `config_sha256`: hash of relevant analysis config
-- `source_files`: hash records for source files used to validate claims
+- `source_files`: hash records for source files used to validate claims and the
+  question README when available
 - `prerequisite_artifacts`: hash records for manifest, inventory, and evidence
 - `extra_inputs`: backend name, backend configuration, output hash, and
   accepted-analysis or diagnostics hash
@@ -201,10 +215,13 @@ Required fields:
 Allowed execution statuses:
 
 - `completed`
-- `partial`
 - `failed`
-- `not_run`
+- `incomplete`
 - `unknown`
+
+This reuses the Milestone 1 deterministic execution-status enum. If the selected
+evidence packet has a deterministic `execution_status` other than `unknown`, the
+analysis `execution_status` must match it exactly.
 
 Allowed hypothesis verdicts:
 
@@ -249,8 +266,16 @@ so the formula parser can distinguish claim symbols from subtraction.
 
 ## Claim Validation
 
-M2 validates structured claims. Prose fields are schema-bounded strings but are
-not scanned for untraceable numeric literals.
+All raw numbers belong in structured claims. Prose fields may refer to claim IDs
+or use qualitative wording, but they must not introduce numeric facts outside
+`claims`. M2 does not render or publish semantic analysis into `PAPER.md`, so
+this policy protects stored analysis artifacts rather than final prose.
+
+Numeric-prose validation applies to `title`, `objective`, `answer`, `meaning`,
+and `limitations`. It rejects standalone numeric tokens such as `13`, `13.585`,
+`-2`, or `100%`. Digits embedded in identifiers such as `exp014` or claim IDs
+are not standalone numeric tokens. Claim values remain the only accepted place
+for raw measured or derived numbers.
 
 ### Measured Claims
 
@@ -294,6 +319,9 @@ Validation rules:
 7. The selector resolves to a scalar JSON-compatible value.
 8. The selected value equals the claim value.
 9. The selected value type matches `value_type`.
+10. The claim must correspond to a `canonical_facts` or `observed_values` entry
+    already present in the selected evidence packet with the same path,
+    source hash, selector type, selector, value, value type, and unit.
 
 Type matching follows JSON Schema scalar semantics with one deliberate widening:
 an integer source value may satisfy a claim with `value_type: "number"`, but a
@@ -303,6 +331,13 @@ Measured numeric equality is exact after JSON/YAML parsing. M2 does not apply
 tolerances, rounding, or unit conversion for measured claims.
 
 Cross-question and unrelated-experiment source paths are rejected in M2.
+The validator may reopen raw JSON/YAML sources only to verify hashes, selectors,
+and values for claims already present in the selected evidence packet. It must
+not discover new measured claims from raw sources in M2.
+
+Accepted analysis requires at least one validated `measured_value` claim. A
+response containing only derived claims, only prose, or zero claims fails
+claim validation.
 
 ### Derived Claims
 
@@ -326,9 +361,11 @@ Validation rules:
    fail validation.
 4. The formula contains only claim IDs, numeric literals, parentheses, and
    `+`, `-`, `*`, `/`.
-5. The formula contains no unknown symbols.
-6. Division by zero fails validation.
-7. The formula result equals the reported value.
+5. Numeric literals are limited to `0`, `1`, and `100`. Every other numeric
+   input must be a measured claim with provenance.
+6. The formula contains no unknown symbols.
+7. Division by zero fails validation.
+8. The formula result equals the reported value exactly.
 
 The implementation should evaluate formulas with a small safe parser, not
 Python `eval`.
@@ -338,6 +375,10 @@ strategy over JSON numeric string representations. A derived integer claim must
 produce an integral result. A derived number claim must compare exactly to the
 reported numeric value after decimal normalization. M2 does not support
 approximate floating-point tolerances.
+
+Rounded derived claims are explicitly deferred. For example, a formula that
+produces `1 / 3` cannot be accepted as `0.333`, `0.33`, or any rounded decimal
+in M2.
 
 JSON and YAML numeric values should be converted to `Decimal` from their parsed
 canonical string representation, not from binary floating-point arithmetic.
@@ -357,6 +398,7 @@ class AnalysisBackend:
 - target repo root
 - config
 - question path
+- question README path and hash when available
 - experiment path
 - inventory path
 - evidence packet path
@@ -433,18 +475,33 @@ target repo. Conceptual invocation:
 codex exec \
   --ephemeral \
   --sandbox read-only \
+  --ask-for-approval never \
+  --output-schema /path/to/experiment-analysis.schema.json \
   --output-last-message /tmp/paperctl-analysis-response.json \
   --file /tmp/paperctl-analysis-prompt.md
 ```
 
 If the installed `codex exec` surface requires a different non-interactive
-prompt transport, the implementation may adapt the argument array, but the
-response contract remains: the backend response body is the UTF-8 contents of a
-single final-message file expected to contain one JSON object.
+prompt transport, the implementation may adapt the argument array. It may not
+drop enforced schema output, read-only execution, or non-interactive/no-approval
+execution.
+
+`CodexExecBackend` must enforce `experiment-analysis.schema.json` with
+`codex exec --output-schema`, not only through prompt instructions. If the
+installed Codex executable cannot enforce schema output, the backend fails before
+invocation with exit code `5`.
+
+`CodexExecBackend` must require read-only and non-interactive/no-approval
+execution. If the installed Codex executable cannot provide those capabilities,
+the backend fails before invocation with exit code `5`.
+
+The response contract remains: the backend response body is the UTF-8 contents
+of a single final-message file expected to contain one JSON object.
 
 The worker prompt is narrow and includes:
 
 - primary question path
+- question README path and current hash when available
 - primary experiment path
 - inventory path
 - evidence packet path
@@ -480,21 +537,42 @@ Parser rules shared by fake and real backends:
 5. Load and validate that experiment inventory.
 6. Load and validate that experiment evidence packet.
 7. Verify deterministic freshness.
-8. Build `AnalysisJob`.
-9. Invoke backend.
-10. Parse backend response.
-11. Validate experiment-analysis schema.
-12. Validate measured claims.
-13. Validate derived claims.
-14. Build analysis-state artifact.
-15. Atomically write analysis-state artifact.
-16. Print concise status summary.
+8. Verify evidence-packet preanalysis disposition and claimable structured
+   evidence.
+9. Build `AnalysisJob` with question README context when available.
+10. For `codex-exec`, verify required schema-output, read-only, and
+    no-approval capabilities.
+11. Invoke backend.
+12. Parse backend response.
+13. Validate experiment-analysis schema.
+14. Validate execution status consistency.
+15. Validate measured claims against evidence-packet facts/values and raw
+    sources.
+16. Validate derived claims.
+17. Validate numeric-prose policy.
+18. Build analysis-state artifact.
+19. Atomically write analysis-state artifact.
+20. Print concise status summary.
 
 ## Error Handling
 
 Missing or stale deterministic prerequisites:
 
 - exit with deterministic failure
+- do not invoke backend
+- do not write an analysis-state artifact
+- leave any existing analysis-state artifact unchanged
+
+Evidence packet not eligible for analysis:
+
+- exit with deterministic failure
+- do not invoke backend
+- do not write an analysis-state artifact
+- leave any existing analysis-state artifact unchanged
+
+Missing Codex backend capability:
+
+- exit with missing dependency failure
 - do not invoke backend
 - do not write an analysis-state artifact
 - leave any existing analysis-state artifact unchanged
@@ -530,7 +608,8 @@ Exit codes follow existing CLI conventions:
   or claim-validation failure
 - `3`: backend process failed or timed out after invocation
 - `4`: invalid command usage
-- `5`: missing `codex` executable or required external backend capability
+- `5`: missing `codex` executable or missing required external backend
+  capability
 
 ## CLI
 
@@ -564,10 +643,17 @@ Accepted and failed analysis states include deterministic fingerprints covering:
 
 - analysis stage version
 - analysis-state schema version
+- analysis-state schema hash
+- experiment-analysis schema hash
 - relevant config
 - manifest artifact hash
 - inventory artifact hash
 - evidence packet artifact hash
+- question README path and hash when available
+- prompt template hash
+- prompt builder version
+- claim-validator version
+- formula evaluator version
 - backend name and non-secret backend configuration
 - raw backend output hash
 - accepted analysis hash or failure diagnostics hash
@@ -586,15 +672,42 @@ Required tests:
 - Missing inventory fails before backend invocation.
 - Missing evidence packet fails before backend invocation.
 - Stale inventory or evidence fails before backend invocation.
+- Evidence packet with `preanalysis_disposition: blocked` fails before backend
+  invocation.
+- Evidence packet with `preanalysis_disposition: needs_human_review` fails
+  before backend invocation.
+- Evidence packet with no claimable structured evidence fails before backend
+  invocation.
 - FakeBackend accepted fixture writes `status: "accepted"`.
 - Invalid schema fixture writes `status: "failed"`.
+- Accepted analysis with no measured claim writes `status: "failed"`.
+- Analysis execution status conflicting with known deterministic execution status
+  writes `status: "failed"`.
 - Stale source hash writes `status: "failed"`.
 - Bad JSON Pointer writes `status: "failed"`.
 - Source outside selected experiment writes `status: "failed"`.
+- Measured claim not present in evidence-packet `canonical_facts` or
+  `observed_values` writes `status: "failed"`.
 - Valid derived arithmetic writes `status: "accepted"`.
 - Unknown derived claim input writes `status: "failed"`.
+- Derived formula with an uncited numeric literal other than `0`, `1`, or `100`
+  writes `status: "failed"`.
+- Non-exact rounded division writes `status: "failed"`.
 - Division by zero writes `status: "failed"`.
+- Prose numeric literal outside structured claims writes `status: "failed"`.
 - Backend failure writes bounded diagnostics.
+- Codex command construction includes read-only sandboxing, no-approval mode, and
+  `--output-schema` pointing at `experiment-analysis.schema.json`.
+- Codex backend refuses to invoke when schema-output enforcement is unavailable.
+- Codex backend refuses to invoke when read-only or no-approval execution is
+  unavailable.
+- Analysis fingerprint changes when the prompt template hash changes.
+- Analysis fingerprint changes when the prompt builder version changes.
+- Analysis fingerprint changes when `experiment-analysis.schema.json` changes.
+- Analysis fingerprint changes when `analysis-state.schema.json` changes.
+- Analysis fingerprint changes when the claim-validator version changes.
+- Analysis fingerprint changes when the formula evaluator version changes.
+- Analysis fingerprint changes when the question README hash changes.
 - Analysis-state output path mirrors manifest paths under `paper/work/analyses`.
 - Analysis-state artifacts validate against schema.
 - Existing Milestone 1 tests remain green.
