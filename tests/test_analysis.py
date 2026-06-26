@@ -1,3 +1,12 @@
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from conftest import copy_fixture_repo, read_json, run_paperctl
+from paperctl.analysis import analyze_experiment
 from paperctl.analysis_prompt import (
     PROMPT_BUILDER_VERSION,
     PROMPT_TEMPLATE,
@@ -5,6 +14,318 @@ from paperctl.analysis_prompt import (
     build_analysis_prompt,
     prompt_template_hash,
 )
+
+
+MANIFEST_PATH = Path("paper/work/manifest.json")
+COMPLETED_EXPERIMENT = "questions/q001-throughput/experiments/exp001-completed"
+CONFLICT_EXPERIMENT = "questions/q001-throughput/experiments/exp003-structured-conflict"
+PREVIEWS_ONLY_EXPERIMENT = "questions/q001-throughput/experiments/exp005-unsupported-and-previews"
+
+
+class AcceptingBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def analyze(self, *_args: Any, **_kwargs: Any) -> None:
+        self.calls += 1
+
+
+def _run_analysis_prerequisites(repo: Path) -> dict[str, Any]:
+    discovered = run_paperctl(repo, "discover")
+    assert discovered.returncode == 0, discovered.stderr
+    inventoried = run_paperctl(repo, "inventory")
+    assert inventoried.returncode == 0, inventoried.stderr
+    normalized = run_paperctl(repo, "normalize")
+    assert normalized.returncode == 0, normalized.stderr
+    return read_json(repo / MANIFEST_PATH)
+
+
+def _manifest_entry(repo: Path, experiment_path: str) -> dict[str, Any]:
+    manifest = read_json(repo / MANIFEST_PATH)
+    return next(
+        entry for entry in manifest["experiments"] if entry["experiment_path"] == experiment_path
+    )
+
+
+def _write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _analysis_path(repo: Path, experiment_path: str) -> Path:
+    return repo / "paper/work/analyses" / f"{experiment_path}.json"
+
+
+def _write_existing_analysis_state(repo: Path, experiment_path: str) -> bytes:
+    path = _analysis_path(repo, experiment_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = b'{"existing":true}\n'
+    path.write_bytes(existing)
+    return existing
+
+
+def _assert_preflight_failure(
+    repo: Path,
+    *,
+    experiment_path: str = COMPLETED_EXPERIMENT,
+    diagnostic_code: str,
+    existing_state: bytes | None = None,
+) -> None:
+    backend = AcceptingBackend()
+
+    result = analyze_experiment(repo, experiment_path, backend=backend)
+
+    assert result.experiment_path == experiment_path
+    assert result.analysis_path is None
+    assert result.status == "preflight_failed"
+    assert result.diagnostic_codes == [diagnostic_code]
+    assert backend.calls == 0
+    path = _analysis_path(repo, experiment_path)
+    if existing_state is None:
+        assert not path.exists()
+    else:
+        assert path.read_bytes() == existing_state
+
+
+def test_analysis_preflight_missing_manifest_fails_before_backend_and_does_not_write_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="missing_manifest",
+        existing_state=existing,
+    )
+
+
+def test_analysis_preflight_malformed_manifest_fails_before_backend_and_preserves_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+    (repo / MANIFEST_PATH).write_text("{", encoding="utf-8")
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="malformed_manifest",
+        existing_state=existing,
+    )
+
+
+def test_analysis_preflight_stale_manifest_fails_before_backend_and_preserves_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+    late = repo / "questions/q001-throughput/experiments/exp999-late"
+    late.mkdir()
+    (late / "README.md").write_text("# Late\n", encoding="utf-8")
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="stale_manifest",
+        existing_state=existing,
+    )
+
+
+def test_analysis_preflight_experiment_not_found_fails_before_backend_and_does_not_write_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+
+    _assert_preflight_failure(
+        repo,
+        experiment_path="questions/q001-throughput/experiments/missing-experiment",
+        diagnostic_code="experiment_not_found",
+    )
+
+
+def test_analysis_preflight_duplicate_manifest_experiment_path_fails_before_backend(
+    tmp_path, monkeypatch
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_analysis_prerequisites(repo)
+    duplicate_entry = dict(_manifest_entry(repo, COMPLETED_EXPERIMENT))
+    manifest["experiments"].append(duplicate_entry)
+
+    def duplicate_manifest(_repo: Path, _config: dict[str, Any]) -> dict[str, Any]:
+        return manifest
+
+    monkeypatch.setattr("paperctl.inventory.load_manifest", duplicate_manifest)
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="duplicate_experiment",
+    )
+
+
+def test_analysis_preflight_missing_inventory_fails_before_backend_and_does_not_write_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    (repo / entry["inventory_path"]).unlink()
+
+    _assert_preflight_failure(repo, diagnostic_code="missing_inventory")
+
+
+def test_analysis_preflight_malformed_inventory_fails_before_backend_and_does_not_write_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    (repo / entry["inventory_path"]).write_text("{", encoding="utf-8")
+
+    _assert_preflight_failure(repo, diagnostic_code="malformed_inventory")
+
+
+def test_analysis_preflight_missing_evidence_fails_before_backend_and_does_not_write_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    (repo / entry["evidence_path"]).unlink()
+
+    _assert_preflight_failure(repo, diagnostic_code="missing_evidence")
+
+
+def test_analysis_preflight_malformed_evidence_fails_before_backend_and_does_not_write_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    (repo / entry["evidence_path"]).write_text("{", encoding="utf-8")
+
+    _assert_preflight_failure(repo, diagnostic_code="malformed_evidence")
+
+
+def test_analysis_preflight_stale_inventory_fails_before_backend_and_preserves_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+    late = repo / COMPLETED_EXPERIMENT / "outputs/late.json"
+    late.write_text('{"late": true}\n', encoding="utf-8")
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="stale_inventory",
+        existing_state=existing,
+    )
+
+
+def test_analysis_preflight_stale_evidence_fails_before_backend_and_preserves_state(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    existing = _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    packet = read_json(repo / entry["evidence_path"])
+    packet["canonical_facts"][0]["value"] = 999
+    _write_json(repo / entry["evidence_path"], packet)
+
+    _assert_preflight_failure(
+        repo,
+        diagnostic_code="stale_evidence",
+        existing_state=existing,
+    )
+
+
+def test_analysis_preflight_blocked_disposition_fails_before_backend(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    blocked = repo / "questions/q001-throughput/experiments/exp999-empty"
+    blocked.mkdir()
+    _run_analysis_prerequisites(repo)
+
+    _assert_preflight_failure(
+        repo,
+        experiment_path="questions/q001-throughput/experiments/exp999-empty",
+        diagnostic_code="blocked_experiment",
+    )
+
+
+def test_analysis_preflight_needs_human_review_disposition_fails_before_backend(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+
+    _assert_preflight_failure(
+        repo,
+        experiment_path=CONFLICT_EXPERIMENT,
+        diagnostic_code="needs_human_review",
+    )
+
+
+def test_analysis_preflight_no_claimable_structured_evidence_fails_before_backend(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+
+    _assert_preflight_failure(
+        repo,
+        experiment_path=PREVIEWS_ONLY_EXPERIMENT,
+        diagnostic_code="no_claimable_structured_evidence",
+    )
+
+
+def test_analysis_preflight_output_path_mirrors_experiment_path_without_experiments_assumption(
+    tmp_path,
+):
+    repo = copy_fixture_repo(tmp_path)
+    config_path = repo / "paper.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["questions"]["experiments_directory"] = "custom-runs"
+    config["evidence"]["canonical_facts"] = {
+        "questions/q001-throughput/custom-runs/exp001": [
+            {
+                "fact_id": "throughput_pages_per_second",
+                "source": "outputs/experiment_report.json",
+                "selector_type": "json_pointer",
+                "selector": "/canonical_facts/0/value",
+                "expected_type": "number",
+                "unit": "pages/s",
+            }
+        ]
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    source = repo / COMPLETED_EXPERIMENT
+    custom = repo / "questions/q001-throughput/custom-runs/exp001"
+    custom.parent.mkdir()
+    custom.mkdir()
+    for child in source.iterdir():
+        if child.is_dir():
+            shutil.copytree(child, custom / child.name)
+        else:
+            (custom / child.name).write_bytes(child.read_bytes())
+
+    _run_analysis_prerequisites(repo)
+    backend = AcceptingBackend()
+
+    result = analyze_experiment(
+        repo,
+        "questions/q001-throughput/custom-runs/exp001",
+        backend=backend,
+    )
+
+    assert result.experiment_path == "questions/q001-throughput/custom-runs/exp001"
+    assert result.status == "failed"
+    assert result.analysis_path == (
+        "paper/work/analyses/questions/q001-throughput/custom-runs/exp001.json"
+    )
+    assert result.diagnostic_codes == []
+    assert backend.calls == 1
+    assert not (repo / result.analysis_path).exists()
 
 
 def _job_context() -> dict:
