@@ -40,6 +40,7 @@ class BatchAnalyzeResult:
     items: list[BatchAnalyzeItem]
     counts: dict[str, int]
     token_totals: dict[str, int]
+    exit_success: bool
 
 
 class AnalyzeOne(Protocol):
@@ -156,6 +157,7 @@ def analyze_experiments(
         items=result.items,
         counts=result.counts,
         token_totals=token_totals,
+        exit_success=result.exit_success,
     )
 
 
@@ -229,6 +231,8 @@ def _run_backend_items(
 
         while futures:
             done, _pending = wait(futures, return_when=FIRST_COMPLETED)
+            done = set(done)
+            done.update(future for future in futures if future.done())
             for future in done:
                 index = futures.pop(future)
                 try:
@@ -242,12 +246,13 @@ def _run_backend_items(
                     )
                     before = None
                 final_item = _item_from_analyze_result(result)
-                items[index] = final_item
-                _emit(on_update, final_item)
                 if before is not None and _analysis_was_written(repo, result.analysis_path, before):
                     token_usage = _read_token_usage(repo, result.analysis_path)
                     if token_usage is not None:
+                        final_item = replace(final_item, token_usage=token_usage)
                         written_token_usage.append(token_usage)
+                items[index] = final_item
+                _emit(on_update, final_item)
                 if final_item.status is not BatchStatus.ACCEPTED:
                     stop_launching = True
 
@@ -385,6 +390,11 @@ def _batch_result(items: list[BatchAnalyzeItem]) -> BatchAnalyzeResult:
         items=list(items),
         counts=counts,
         token_totals=_zero_token_totals(),
+        exit_success=(
+            counts["failed"] == 0
+            and counts["blocked"] == 0
+            and counts["not_started"] == 0
+        ),
     )
 
 

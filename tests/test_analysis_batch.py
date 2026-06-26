@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import threading
+from concurrent.futures import wait as real_futures_wait
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,7 @@ def test_batch_model_statuses_and_counts_are_explicit(tmp_path):
         on_update=updates.append,
     )
 
+    assert result.exit_success is True
     assert BatchStatus.ACCEPTED.value == "accepted"
     assert result.counts == {
         "selected": 1,
@@ -157,6 +159,7 @@ def test_explicit_selection_validation_blocks_all_backend_invocation(tmp_path):
         on_update=updates.append,
     )
 
+    assert result.exit_success is False
     assert calls == []
     assert [(item.experiment_path, item.status, item.diagnostic_codes) for item in result.items] == [
         (COMPLETED_EXPERIMENT, BatchStatus.NOT_STARTED, []),
@@ -315,7 +318,7 @@ def test_fail_fast_preserves_running_results_and_marks_unsubmitted_not_started(t
     )
 
     assert second_started.is_set()
-    assert calls == [COMPLETED_EXPERIMENT, INCOMPLETE_EXPERIMENT]
+    assert set(calls) == {COMPLETED_EXPERIMENT, INCOMPLETE_EXPERIMENT}
     assert [item.status for item in result.items] == [
         BatchStatus.FAILED,
         BatchStatus.ACCEPTED,
@@ -330,6 +333,63 @@ def test_fail_fast_preserves_running_results_and_marks_unsubmitted_not_started(t
         "blocked": 0,
         "not_started": 2,
     }
+    assert result.exit_success is False
+
+
+def test_fail_fast_drains_already_done_futures_before_launching_more_work(
+    tmp_path, monkeypatch
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    calls = []
+
+    def selective_wait(futures, return_when):  # noqa: ANN001
+        real_futures_wait(futures)
+        done = {future for future in futures if future.done()}
+        accepted = {
+            future
+            for future in done
+            if future.result()[0].experiment_path == INCOMPLETE_EXPERIMENT
+        }
+        if accepted:
+            selected = {next(iter(accepted))}
+            return selected, set(futures) - selected
+        return done, set(futures) - done
+
+    monkeypatch.setattr("paperctl.analysis_batch.wait", selective_wait)
+
+    def analyze_one(*, repo: Path, experiment: str, **_kwargs: Any) -> AnalyzeResult:
+        calls.append(experiment)
+        if experiment == COMPLETED_EXPERIMENT:
+            return AnalyzeResult(
+                experiment_path=experiment,
+                analysis_path=f"paper/work/analyses/{experiment}.json",
+                status="failed",
+                diagnostic_codes=["schema_failure"],
+            )
+        if experiment == INCOMPLETE_EXPERIMENT:
+            return AnalyzeResult(
+                experiment_path=experiment,
+                analysis_path=f"paper/work/analyses/{experiment}.json",
+                status="accepted",
+                diagnostic_codes=[],
+            )
+        raise AssertionError(f"unexpected launch after fail-fast: {experiment}")
+
+    result = analyze_experiments(
+        repo,
+        [COMPLETED_EXPERIMENT, INCOMPLETE_EXPERIMENT, SMOKE_EXPERIMENT],
+        backend=NamedBackend(),
+        jobs=2,
+        analyze_one=analyze_one,
+    )
+
+    assert set(calls) == {COMPLETED_EXPERIMENT, INCOMPLETE_EXPERIMENT}
+    assert [item.status for item in result.items] == [
+        BatchStatus.FAILED,
+        BatchStatus.ACCEPTED,
+        BatchStatus.NOT_STARTED,
+    ]
 
 
 def test_token_totals_only_include_analysis_files_written_by_this_batch(tmp_path):
@@ -375,6 +435,8 @@ def test_token_totals_only_include_analysis_files_written_by_this_batch(tmp_path
         analyze_one=analyze_one,
     )
 
+    assert result.items[0].token_usage is None
+    assert result.items[1].token_usage == written_tokens
     assert result.token_totals == written_tokens
     assert result.counts["accepted"] == 2
     assert not list((repo / "paper/work").glob("*batch*"))
