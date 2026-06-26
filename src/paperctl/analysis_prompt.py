@@ -138,9 +138,19 @@ def _sanitize_for_prompt(value: Any) -> Any:
 
 
 def _sanitize_dict_item_for_prompt(parent: dict[Any, Any], key: str, value: Any) -> Any:
-    if key == "selector" and parent.get("selector_type") == "json_pointer":
+    if (
+        key == "selector"
+        and parent.get("selector_type") == "json_pointer"
+        and _is_json_pointer(value)
+    ):
         return value
     return _sanitize_for_prompt(value)
+
+
+def _is_json_pointer(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value == "" or (value.startswith("/") and re.search(r"~(?![01])", value) is None)
 
 
 def _is_unsafe_path(value: str) -> bool:
@@ -154,6 +164,7 @@ def _is_unsafe_path(value: str) -> bool:
         or value.lower().startswith("tmp\\")
         or value.startswith("../")
         or value.startswith("..\\")
+        or re.search(r"(^|[\\/])\.\.(?:$|[\\/])", value) is not None
         or "/../" in value
         or "\\..\\" in value
         or value.endswith("/..")

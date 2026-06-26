@@ -185,6 +185,53 @@ def test_analysis_prompt_preserves_json_pointer_selectors():
     assert '"/observed_values/0/source/selector"' in prompt
 
 
+def test_analysis_prompt_preserves_empty_json_pointer_selector():
+    packet = _evidence_packet()
+    packet["canonical_facts"][0]["source"]["selector"] = ""
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert '"selector": ""' in prompt
+
+
+def test_analysis_prompt_redacts_invalid_json_pointer_selector_paths():
+    packet = _evidence_packet()
+    packet["observed_values"] = [
+        {
+            "source": {
+                "selector_type": "json_pointer",
+                "selector": r"\\server\share\result.json",
+            },
+        },
+        {
+            "source": {
+                "selector_type": "json_pointer",
+                "selector": r"\Users\tom\target-repo\result.json",
+            },
+        },
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert r"\\\\server\\share\\result.json" not in prompt
+    assert r"\\Users\\tom\\target-repo\\result.json" not in prompt
+    assert "[omitted unsafe path]" in prompt
+
+
+def test_analysis_prompt_redacts_mixed_separator_traversal_exact_paths():
+    packet = _evidence_packet()
+    packet["diagnostics"] = [
+        r"questions/q\../secret.json",
+        r"questions/q/..\secret.json",
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert r"questions/q\\../secret.json" not in prompt
+    assert r"questions/q/..\\secret.json" not in prompt
+    assert "[omitted unsafe path]" in prompt
+
+
 def test_analysis_prompt_redacts_embedded_windows_absolute_and_temp_paths():
     packet = _evidence_packet()
     packet["diagnostics"] = [
