@@ -280,6 +280,73 @@ def test_analyze_experiments_menu_is_mutually_exclusive_with_explicit_paths(
     assert "--experiments-menu cannot be used with explicit experiments" in captured.err
 
 
+def test_analyze_experiments_menu_refuses_non_tty_before_config_load(
+    monkeypatch, tmp_path, capsys
+):
+    from paperctl import cli
+
+    def fail_load_config(_repo):
+        raise AssertionError("load_config should not be called for non-TTY menu")
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "load_config", fail_load_config)
+
+    exit_code = cli.main(["--repo", str(tmp_path), "analyze", "--experiments-menu"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 4
+    assert "--experiments-menu requires an interactive terminal" in captured.err
+
+
+def test_analyze_experiments_menu_selected_paths_are_passed_to_batch_runner(
+    monkeypatch, tmp_path
+):
+    from paperctl import cli
+
+    calls = []
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "load_config", lambda repo: {"loaded": True})
+    monkeypatch.setattr(
+        cli,
+        "choose_experiments_interactively",
+        lambda repo, config: [COMPLETED_EXPERIMENT, CONFLICT_EXPERIMENT],
+    )
+
+    def fake_analyze_experiments(repo, experiments, **kwargs):
+        calls.append((repo, experiments, kwargs))
+        return _batch_result(
+            [
+                _batch_item(COMPLETED_EXPERIMENT, BatchStatus.ACCEPTED),
+                _batch_item(CONFLICT_EXPERIMENT, BatchStatus.BLOCKED, ["needs_human_review"]),
+            ],
+            exit_success=False,
+        )
+
+    monkeypatch.setattr(cli, "analyze_experiments", fake_analyze_experiments)
+
+    exit_code = cli.main(
+        [
+            "--repo",
+            str(tmp_path),
+            "analyze",
+            "--experiments-menu",
+            "--backend",
+            "fake",
+            "--fake-response",
+            str(ANALYSIS_FIXTURE),
+            "--jobs",
+            "3",
+            "--plain",
+        ]
+    )
+
+    assert exit_code == 2
+    assert calls[0][1] == [COMPLETED_EXPERIMENT, CONFLICT_EXPERIMENT]
+    assert calls[0][2]["jobs"] == 3
+
+
 @pytest.mark.parametrize("jobs", ["0", "-1"])
 def test_analyze_jobs_must_be_positive(monkeypatch, tmp_path, capsys, jobs):
     from paperctl import cli

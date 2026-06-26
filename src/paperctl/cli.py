@@ -5,6 +5,7 @@ import sys
 from paperctl.analysis import AnalysisError
 from paperctl.analysis_batch import analyze_experiments
 from paperctl.analysis_backends import CodexExecBackend, FakeBackend
+from paperctl.analysis_menu import ExperimentMenuError, choose_experiments_interactively
 from paperctl.audit import AuditError, audit
 from paperctl.build import BuildError, build
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
@@ -184,14 +185,24 @@ def main(argv: list[str] | None = None) -> int:
         if invalid is not None:
             print(f"{parser.prog}: {invalid}", file=sys.stderr)
             return INVALID_INVOCATION
+        if args.experiments_menu:
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                print(
+                    f"{parser.prog}: --experiments-menu requires an interactive terminal",
+                    file=sys.stderr,
+                )
+                return INVALID_INVOCATION
+            try:
+                config = load_config(repo)
+                args.experiments = choose_experiments_interactively(repo, config)
+            except ExperimentMenuError as exc:
+                print(f"{parser.prog}: {exc}", file=sys.stderr)
+                return INVALID_INVOCATION
+            except ConfigError as exc:
+                print(f"{parser.prog}: {exc}", file=sys.stderr)
+                return DETERMINISTIC_FAILURE
         backend = _analysis_backend(args.backend)
         backend_options_override = _analysis_backend_options_override(args)
-        if args.experiments_menu:
-            print(
-                f"{parser.prog}: --experiments-menu selection is not implemented yet",
-                file=sys.stderr,
-            )
-            return INVALID_INVOCATION
         use_rich = _use_rich(args)
         progress = RichAnalyzeProgressReporter() if use_rich else None
         try:
