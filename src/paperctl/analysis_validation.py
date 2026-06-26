@@ -14,7 +14,7 @@ from paperctl.adapters import json_adapter, yaml_adapter
 from paperctl.formula import FormulaError, evaluate_formula_exact
 
 
-ANALYSIS_VALIDATION_VERSION = 1
+ANALYSIS_VALIDATION_VERSION = 2
 
 CODE_DUPLICATE_CLAIM_ID = "duplicate_claim_id"
 CODE_NO_MEASURED_CLAIM = "no_measured_claim"
@@ -37,6 +37,7 @@ CODE_EXECUTION_STATUS_MISMATCH = "execution_status_mismatch"
 CODE_NUMERIC_PROSE = "numeric_prose"
 CODE_DERIVED_NON_NUMERIC_INPUT = "derived_non_numeric_input"
 CODE_DERIVED_UNKNOWN_INPUT = "derived_unknown_input"
+CODE_DERIVED_DUPLICATE_INPUT = "derived_duplicate_input"
 CODE_DERIVED_UNCITED_NUMERIC_LITERAL = "derived_uncited_numeric_literal"
 CODE_DERIVED_INEXACT_DIVISION = "derived_inexact_division"
 CODE_DERIVED_DIVISION_BY_ZERO = "derived_division_by_zero"
@@ -364,6 +365,17 @@ def _validate_measured_claim(
 
     raw_value_type = _value_type(raw_value)
     claim_value_type = claim.get("value_type")
+    claim_actual_value_type = _value_type(claim.get("value"))
+    if not _source_value_type_satisfies(claim_actual_value_type, claim_value_type):
+        return [
+            _source_diagnostic(
+                CODE_VALUE_TYPE_MISMATCH,
+                "Measured claim value_type does not match the claim value.",
+                source,
+                detail={"expected": claim_value_type, "actual": claim_actual_value_type},
+            )
+        ]
+
     if not _source_value_type_satisfies(raw_value_type, claim_value_type):
         return [
             _source_diagnostic(
@@ -686,6 +698,14 @@ def _validate_derived_claim(
             AnalysisDiagnostic(
                 CODE_DERIVED_UNKNOWN_INPUT,
                 "Derived claim input_claim_ids must be a list.",
+                detail={"claim_id": claim_id},
+            )
+        ]
+    if len(input_claim_ids) != len(set(input_claim_ids)):
+        return [
+            AnalysisDiagnostic(
+                CODE_DERIVED_DUPLICATE_INPUT,
+                "Derived claim input_claim_ids must be unique.",
                 detail={"claim_id": claim_id},
             )
         ]

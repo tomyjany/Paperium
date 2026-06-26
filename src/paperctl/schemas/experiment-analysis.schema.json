@@ -20,13 +20,17 @@
         "claims"
     ],
     "properties": {
-        "schema_version": {"const": 1},
-        "artifact_type": {"const": "experiment_analysis"},
+        "schema_version": {"type": "integer", "const": 1},
+        "artifact_type": {"type": "string", "const": "experiment_analysis"},
         "question_path": {"$ref": "#/$defs/relative_path"},
         "experiment_path": {"$ref": "#/$defs/relative_path"},
         "title": {"type": "string", "minLength": 1, "maxLength": 160},
-        "execution_status": {"enum": ["completed", "failed", "incomplete", "unknown"]},
+        "execution_status": {
+            "type": "string",
+            "enum": ["completed", "failed", "incomplete", "unknown"]
+        },
         "hypothesis_verdict": {
+            "type": "string",
             "enum": [
                 "supported",
                 "partially_supported",
@@ -43,7 +47,7 @@
             "maxItems": 10,
             "items": {"type": "string", "minLength": 1, "maxLength": 500}
         },
-        "confidence": {"enum": ["high", "medium", "low"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "claims": {
             "type": "array",
             "maxItems": 50,
@@ -56,7 +60,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 1000,
-            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            "pattern": "^[^\\\\]+$"
         },
         "claim_id": {
             "type": "string",
@@ -74,7 +78,7 @@
         "json_pointer": {
             "type": "string",
             "maxLength": 1000,
-            "pattern": "^(|/(?:[^~]|~[01])*(?:/(?:[^~]|~[01])*)*)$"
+            "pattern": "^($|/.*)$"
         },
         "source": {
             "type": "object",
@@ -83,7 +87,7 @@
             "properties": {
                 "path": {"$ref": "#/$defs/relative_path"},
                 "source_hash": {"$ref": "#/$defs/hash"},
-                "selector_type": {"const": "json_pointer"},
+                "selector_type": {"type": "string", "const": "json_pointer"},
                 "selector": {"$ref": "#/$defs/json_pointer"}
             }
         },
@@ -96,65 +100,11 @@
                 {"type": "null"}
             ]
         },
-        "value_type": {"enum": ["string", "number", "integer", "boolean", "null"]},
-        "typed_value": {
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "string"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "string", "maxLength": 2000}}}
-                },
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "number"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "number"}}}
-                },
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "integer"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "integer"}}}
-                },
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "boolean"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "boolean"}}}
-                },
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "null"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "null"}}}
-                }
-            ]
+        "value_type": {
+            "type": "string",
+            "enum": ["string", "number", "integer", "boolean", "null"]
         },
-        "numeric_value_type": {"enum": ["number", "integer"]},
-        "typed_numeric_value": {
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "number"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "number"}}}
-                },
-                {
-                    "if": {
-                        "properties": {"value_type": {"const": "integer"}},
-                        "required": ["value_type"]
-                    },
-                    "then": {"properties": {"value": {"type": "integer"}}}
-                }
-            ]
-        },
+        "numeric_value_type": {"type": "string", "enum": ["number", "integer"]},
         "measured_claim": {
             "type": "object",
             "additionalProperties": false,
@@ -169,14 +119,13 @@
             ],
             "properties": {
                 "claim_id": {"$ref": "#/$defs/claim_id"},
-                "claim_type": {"const": "measured_value"},
+                "claim_type": {"type": "string", "const": "measured_value"},
                 "label": {"$ref": "#/$defs/label"},
                 "value": {"$ref": "#/$defs/scalar"},
                 "value_type": {"$ref": "#/$defs/value_type"},
                 "unit": {"$ref": "#/$defs/unit"},
                 "source": {"$ref": "#/$defs/source"}
-            },
-            "allOf": [{"$ref": "#/$defs/typed_value"}]
+            }
         },
         "derived_claim": {
             "type": "object",
@@ -193,7 +142,7 @@
             ],
             "properties": {
                 "claim_id": {"$ref": "#/$defs/claim_id"},
-                "claim_type": {"const": "derived_value"},
+                "claim_type": {"type": "string", "const": "derived_value"},
                 "label": {"$ref": "#/$defs/label"},
                 "value": {"type": "number"},
                 "value_type": {"$ref": "#/$defs/numeric_value_type"},
@@ -208,14 +157,12 @@
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 20,
-                    "uniqueItems": true,
                     "items": {"$ref": "#/$defs/claim_id"}
                 }
-            },
-            "allOf": [{"$ref": "#/$defs/typed_numeric_value"}]
+            }
         },
         "claim": {
-            "oneOf": [
+            "anyOf": [
                 {"$ref": "#/$defs/measured_claim"},
                 {"$ref": "#/$defs/derived_claim"}
             ]

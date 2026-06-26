@@ -393,6 +393,75 @@ def test_experiment_analysis_schema_accepts_minimal_valid_analysis():
     validate_artifact("experiment-analysis.schema.json", _experiment_analysis())
 
 
+def test_experiment_analysis_schema_codex_output_schema_enums_have_explicit_types():
+    from paperctl._support.schema import load_schema
+
+    schema = load_schema("experiment-analysis.schema.json")
+    missing_type_paths: list[str] = []
+
+    def walk(value, path):
+        if isinstance(value, dict):
+            if "type" not in value:
+                if "const" in value:
+                    missing_type_paths.append("/".join(path + ["const"]))
+                enum_values = value.get("enum")
+                if isinstance(enum_values, list) and enum_values:
+                    missing_type_paths.append("/".join(path + ["enum"]))
+            for key, nested in value.items():
+                walk(nested, path + [key])
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                walk(nested, path + [str(index)])
+
+    walk(schema, [])
+
+    assert missing_type_paths == []
+
+
+def test_experiment_analysis_schema_avoids_codex_unsupported_composition_keywords():
+    from paperctl._support.schema import load_schema
+
+    schema = load_schema("experiment-analysis.schema.json")
+    unsupported_paths: list[str] = []
+    unsupported_keywords = {"allOf", "oneOf", "if", "then", "else", "uniqueItems"}
+
+    def walk(value, path):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key in unsupported_keywords:
+                    unsupported_paths.append("/".join(path + [key]))
+                walk(nested, path + [key])
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                walk(nested, path + [str(index)])
+
+    walk(schema, [])
+
+    assert unsupported_paths == []
+
+
+def test_experiment_analysis_schema_avoids_codex_unsupported_regex_lookaround():
+    from paperctl._support.schema import load_schema
+
+    schema = load_schema("experiment-analysis.schema.json")
+    unsupported_paths: list[str] = []
+
+    def walk(value, path):
+        if isinstance(value, dict):
+            pattern = value.get("pattern")
+            if isinstance(pattern, str) and "(?" in pattern:
+                unsupported_paths.append("/".join(path + ["pattern"]))
+            for key, nested in value.items():
+                walk(nested, path + [key])
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                walk(nested, path + [str(index)])
+
+    walk(schema, [])
+
+    assert unsupported_paths == []
+
+
 def test_experiment_analysis_fixture_schema_intent_table_is_complete():
     from paperctl._support.schema import validate_artifact
 
@@ -457,14 +526,11 @@ def test_experiment_analysis_schema_rejects_unknown_enums(field, value):
 @pytest.mark.parametrize(
     "path",
     [
-        "/absolute/path",
-        "../escape",
-        "questions/q001-throughput/../escape",
         "questions\\q001-throughput",
         "C:\\repo\\questions\\q001-throughput",
     ],
 )
-def test_experiment_analysis_paths_must_be_posix_repo_relative(field, path):
+def test_experiment_analysis_schema_rejects_backslash_paths(field, path):
     from paperctl._support.schema import validate_artifact
 
     analysis = _experiment_analysis(**{field: path})
@@ -492,15 +558,16 @@ def test_experiment_analysis_schema_rejects_bad_claim_id():
         ("not null", "null"),
     ],
 )
-def test_experiment_analysis_measured_claim_value_must_match_value_type(value, value_type):
+def test_experiment_analysis_schema_leaves_claim_value_type_pairing_to_validator(
+    value, value_type
+):
     from paperctl._support.schema import validate_artifact
 
     analysis = _experiment_analysis()
     analysis["claims"][0]["value"] = value
     analysis["claims"][0]["value_type"] = value_type
 
-    with pytest.raises(ValidationError):
-        validate_artifact("experiment-analysis.schema.json", analysis)
+    validate_artifact("experiment-analysis.schema.json", analysis)
 
 
 @pytest.mark.parametrize(
@@ -535,14 +602,11 @@ def test_experiment_analysis_schema_rejects_unbounded_strings(path, value):
 @pytest.mark.parametrize(
     "path",
     [
-        "/absolute/result.json",
-        "../result.json",
-        "questions/q001-throughput/experiments/exp001-completed/../result.json",
         "questions\\q001-throughput\\experiments\\exp001-completed\\outputs\\result.json",
         "C:\\repo\\questions\\q001-throughput\\result.json",
     ],
 )
-def test_experiment_analysis_measured_source_path_must_be_posix_repo_relative(path):
+def test_experiment_analysis_schema_rejects_backslash_source_paths(path):
     from paperctl._support.schema import validate_artifact
 
     analysis = _experiment_analysis()
@@ -578,8 +642,8 @@ def test_experiment_analysis_schema_rejects_malformed_source_hash():
         validate_artifact("experiment-analysis.schema.json", analysis)
 
 
-@pytest.mark.parametrize("selector", ["/bad~2escape", "canonical_facts/0/value"])
-def test_experiment_analysis_schema_rejects_invalid_json_pointer_source_selectors(selector):
+@pytest.mark.parametrize("selector", ["canonical_facts/0/value"])
+def test_experiment_analysis_schema_requires_json_pointer_selector_prefix(selector):
     from paperctl._support.schema import validate_artifact
 
     analysis = _experiment_analysis()

@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-PROMPT_BUILDER_VERSION = 1
+PROMPT_BUILDER_VERSION = 2
 
 PROMPT_TEMPLATE = """\
 You are analyzing one selected experiment for paperctl.
@@ -26,6 +26,16 @@ numeric claim must be represented in structured claims with a repository-relativ
 artifact path and machine-readable selector. Numeric-prose policy: raw numbers belong in structured claims.
 Prose may refer to claim IDs or use qualitative wording but must not introduce
 numeric facts.
+
+Measured claims must be copied only from canonical_facts or observed_values in
+the Evidence packet. Copy value, value_type, unit, source.path,
+source.source_hash, source.selector_type, and source.selector exactly from one
+canonical_facts or observed_values entry. Do not include source adapter fields in
+the output. Do not create measured claims from previews, diagnostics, logs,
+README text, recommendation text, summaries, or raw artifact text unless the
+same value already appears in canonical_facts or observed_values. If useful
+values appear only outside canonical_facts and observed_values, discuss them
+qualitatively without raw numbers and do not claim them.
 
 Selected paths:
 {context_lines}

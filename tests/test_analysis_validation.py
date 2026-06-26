@@ -12,6 +12,7 @@ from paperctl.analysis_validation import (
     AnalysisDiagnostic,
     CODE_ABSOLUTE_SOURCE_PATH,
     CODE_DERIVED_DIVISION_BY_ZERO,
+    CODE_DERIVED_DUPLICATE_INPUT,
     CODE_DERIVED_INEXACT_DIVISION,
     CODE_DERIVED_NON_INTEGRAL_RESULT,
     CODE_DERIVED_NON_NUMERIC_INPUT,
@@ -96,7 +97,7 @@ def test_exposes_public_api_version_and_frozen_diagnostic_shape():
         detail={"field": "value"},
     )
 
-    assert ANALYSIS_VALIDATION_VERSION == 1
+    assert ANALYSIS_VALIDATION_VERSION == 2
     assert dataclasses.asdict(diagnostic) == {
         "code": "sample_code",
         "message": "Sample message.",
@@ -575,6 +576,16 @@ def test_rejects_unknown_derived_input():
     assert _only_code(_load_json(ANALYSIS_FIXTURES / "unknown-derived-input.json")) == (
         CODE_DERIVED_UNKNOWN_INPUT
     )
+
+
+def test_rejects_duplicate_derived_input_ids():
+    analysis = _load_json(ANALYSIS_FIXTURES / "valid-derived.json")
+    analysis["claims"][1]["input_claim_ids"] = [
+        "throughput_pages_per_second",
+        "throughput_pages_per_second",
+    ]
+
+    assert _only_code(analysis) == CODE_DERIVED_DUPLICATE_INPUT
 
 
 def test_rejects_uncited_numeric_literal():
