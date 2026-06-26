@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "artifact_type": "experiment_analysis",
+  "question_path": "questions/q001-throughput",
+  "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+  "title": "Source outside experiment",
+  "execution_status": "completed",
+  "hypothesis_verdict": "supported",
+  "objective": "Evaluate throughput using a source from a different experiment.",
+  "answer": "The measured claim throughput_pages_per_second is available.",
+  "meaning": "The source path is valid but outside the selected experiment.",
+  "limitations": [
+    "This fixture intentionally cites another experiment's artifact."
+  ],
+  "confidence": "medium",
+  "claims": [
+    {
+      "claim_id": "throughput_pages_per_second",
+      "claim_type": "measured_value",
+      "label": "Throughput",
+      "value": 21.5,
+      "value_type": "number",
+      "unit": null,
+      "source": {
+        "path": "questions/q001-throughput/experiments/exp002-incomplete/outputs/status.json",
+        "source_hash": "sha256:8a04bc39e6c3cc264c84b22b236939f86d8ba390310d628507ff8ed855d6016b",
+        "selector_type": "json_pointer",
+        "selector": "/observations/throughput_pages_per_second"
+      }
+    }
+  ]
+}

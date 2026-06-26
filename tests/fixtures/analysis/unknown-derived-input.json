@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "artifact_type": "experiment_analysis",
+  "question_path": "questions/q001-throughput",
+  "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+  "title": "Unknown derived input",
+  "execution_status": "completed",
+  "hypothesis_verdict": "supported",
+  "objective": "Evaluate throughput with a derived claim that references a missing input.",
+  "answer": "The measured claim throughput_pages_per_second is available.",
+  "meaning": "The derived claim cannot be evaluated because one input is absent.",
+  "limitations": [
+    "This fixture intentionally references an unknown input claim."
+  ],
+  "confidence": "medium",
+  "claims": [
+    {
+      "claim_id": "throughput_pages_per_second",
+      "claim_type": "measured_value",
+      "label": "Throughput",
+      "value": 42.5,
+      "value_type": "number",
+      "unit": "pages/s",
+      "source": {
+        "path": "questions/q001-throughput/experiments/exp001-completed/outputs/experiment_report.json",
+        "source_hash": "sha256:4bf7977e2379089b948891299acad85afb21056d02280f360549b1b4b7d86fdb",
+        "selector_type": "json_pointer",
+        "selector": "/canonical_facts/0/value"
+      }
+    },
+    {
+      "claim_id": "missing_input_total",
+      "claim_type": "derived_value",
+      "label": "Missing input total",
+      "value": 43.5,
+      "value_type": "number",
+      "unit": "pages/s",
+      "formula": "throughput_pages_per_second + missing_claim",
+      "input_claim_ids": [
+        "throughput_pages_per_second",
+        "missing_claim"
+      ]
+    }
+  ]
+}

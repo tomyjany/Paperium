@@ -1,9 +1,31 @@
 import copy
+import json
 import re
+from pathlib import Path
 
 import pytest
 import yaml
 from jsonschema import Draft202012Validator, ValidationError
+
+
+SCHEMA_VALID_ANALYSIS_FIXTURES = {
+    "exp001-success.json",
+    "no-measured-claim.json",
+    "execution-status-mismatch.json",
+    "stale-source-hash.json",
+    "bad-selector.json",
+    "source-outside-experiment.json",
+    "claim-not-in-evidence.json",
+    "valid-derived.json",
+    "bad-derived-literal.json",
+    "unknown-derived-input.json",
+    "rounded-division.json",
+    "division-by-zero.json",
+    "numeric-prose.json",
+}
+SCHEMA_INVALID_ANALYSIS_FIXTURES = {"invalid-schema.json"}
+
+ANALYSIS_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "analysis"
 
 
 def _evidence_packet(**overrides):
@@ -368,6 +390,25 @@ def test_experiment_analysis_schema_accepts_minimal_valid_analysis():
     from paperctl._support.schema import validate_artifact
 
     validate_artifact("experiment-analysis.schema.json", _experiment_analysis())
+
+
+def test_experiment_analysis_fixture_schema_intent_table_is_complete():
+    from paperctl._support.schema import validate_artifact
+
+    fixture_names = {fixture_path.name for fixture_path in ANALYSIS_FIXTURE_DIR.glob("*.json")}
+    classified_names = SCHEMA_VALID_ANALYSIS_FIXTURES | SCHEMA_INVALID_ANALYSIS_FIXTURES
+
+    assert SCHEMA_VALID_ANALYSIS_FIXTURES.isdisjoint(SCHEMA_INVALID_ANALYSIS_FIXTURES)
+    assert fixture_names == classified_names
+
+    for fixture_name in sorted(SCHEMA_VALID_ANALYSIS_FIXTURES):
+        fixture = json.loads((ANALYSIS_FIXTURE_DIR / fixture_name).read_text())
+        validate_artifact("experiment-analysis.schema.json", fixture)
+
+    for fixture_name in sorted(SCHEMA_INVALID_ANALYSIS_FIXTURES):
+        fixture = json.loads((ANALYSIS_FIXTURE_DIR / fixture_name).read_text())
+        with pytest.raises(ValidationError):
+            validate_artifact("experiment-analysis.schema.json", fixture)
 
 
 @pytest.mark.parametrize("property_name", ["unexpected"])

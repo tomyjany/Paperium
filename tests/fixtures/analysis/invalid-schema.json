@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "artifact_type": "experiment_analysis",
+  "question_path": "questions/q001-throughput",
+  "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+  "title": "Invalid schema fixture",
+  "execution_status": "completed",
+  "hypothesis_verdict": "supported",
+  "objective": "This fixture intentionally violates the analysis schema.",
+  "answer": "The claims field is not an array.",
+  "meaning": "Schema validation must reject this payload.",
+  "limitations": [],
+  "confidence": "medium",
+  "claims": "not an array"
+}

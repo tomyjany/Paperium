@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "artifact_type": "experiment_analysis",
+  "question_path": "questions/q001-throughput",
+  "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+  "title": "Stale source hash",
+  "execution_status": "completed",
+  "hypothesis_verdict": "supported",
+  "objective": "Evaluate throughput using the canonical throughput fact.",
+  "answer": "The measured claim throughput_pages_per_second is available.",
+  "meaning": "The claim points at the right source with a stale hash.",
+  "limitations": [
+    "This fixture intentionally reports a stale source hash."
+  ],
+  "confidence": "medium",
+  "claims": [
+    {
+      "claim_id": "throughput_pages_per_second",
+      "claim_type": "measured_value",
+      "label": "Throughput",
+      "value": 42.5,
+      "value_type": "number",
+      "unit": "pages/s",
+      "source": {
+        "path": "questions/q001-throughput/experiments/exp001-completed/outputs/experiment_report.json",
+        "source_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "selector_type": "json_pointer",
+        "selector": "/canonical_facts/0/value"
+      }
+    }
+  ]
+}

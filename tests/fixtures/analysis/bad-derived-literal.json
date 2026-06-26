@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "artifact_type": "experiment_analysis",
+  "question_path": "questions/q001-throughput",
+  "experiment_path": "questions/q001-throughput/experiments/exp001-completed",
+  "title": "Bad derived literal",
+  "execution_status": "completed",
+  "hypothesis_verdict": "supported",
+  "objective": "Evaluate throughput and derive an identity percentage.",
+  "answer": "The measured claim throughput_pages_per_second supports a derived percentage claim.",
+  "meaning": "The derived claim literal should not match the formula result.",
+  "limitations": [
+    "This fixture intentionally reports the wrong derived value."
+  ],
+  "confidence": "medium",
+  "claims": [
+    {
+      "claim_id": "throughput_pages_per_second",
+      "claim_type": "measured_value",
+      "label": "Throughput",
+      "value": 42.5,
+      "value_type": "number",
+      "unit": "pages/s",
+      "source": {
+        "path": "questions/q001-throughput/experiments/exp001-completed/outputs/experiment_report.json",
+        "source_hash": "sha256:4bf7977e2379089b948891299acad85afb21056d02280f360549b1b4b7d86fdb",
+        "selector_type": "json_pointer",
+        "selector": "/canonical_facts/0/value"
+      }
+    },
+    {
+      "claim_id": "throughput_identity_percent",
+      "claim_type": "derived_value",
+      "label": "Throughput identity percent",
+      "value": 99,
+      "value_type": "integer",
+      "unit": "%",
+      "formula": "throughput_pages_per_second / throughput_pages_per_second * 100",
+      "input_claim_ids": [
+        "throughput_pages_per_second"
+      ]
+    }
+  ]
+}
