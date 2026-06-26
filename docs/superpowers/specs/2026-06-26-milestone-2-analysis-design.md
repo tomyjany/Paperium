@@ -65,6 +65,25 @@ by Milestone 1 stages. If any prerequisite is missing, malformed, stale, or does
 not match the selected manifest entry, `analyze` exits with deterministic failure
 and does not call the backend.
 
+Exact preflight checks:
+
+1. Load and schema-validate the manifest from configured `paper.work_directory`.
+2. Recompute the expected discovery manifest from current question directories
+   and compare canonical JSON bytes to the stored manifest.
+3. Load and schema-validate the selected inventory.
+4. Recompute the expected inventory for the selected manifest entry, including
+   configured exclusions and inventory fingerprint, and compare canonical JSON
+   bytes to the stored inventory.
+5. Load and schema-validate the selected evidence packet.
+6. Recompute the expected evidence packet for the selected manifest entry using
+   current manifest, inventory, config, adapters, and source files, and compare
+   canonical JSON bytes to the stored evidence packet.
+
+Preflight failures are not analysis attempts. They do not replace an existing
+analysis-state artifact. Backend, parse, schema, or claim-validation failures
+are analysis attempts and replace the stable analysis-state artifact with
+`status: "failed"`.
+
 ## Output Artifact
 
 Each selected experiment writes one stable analysis-state artifact:
@@ -88,38 +107,73 @@ previous accepted state. The write is atomic.
 ## Analysis State Schema
 
 The stable artifact has `artifact_type: "analysis_state"` and one of two states.
+The JSON Schema should set `additionalProperties: false` except inside explicitly
+free-form diagnostic `detail` objects.
 
 Accepted state:
 
-- `schema_version`
-- `artifact_type`
-- `question_path`
-- `experiment_path`
-- `analysis_path`
-- `status: "accepted"`
-- `fingerprint`
-- `backend`
-- `analysis`
-- `diagnostics: []`
+- `schema_version`: integer const `1`
+- `artifact_type`: string const `"analysis_state"`
+- `question_path`: repo-relative path from the manifest entry
+- `experiment_path`: repo-relative path from the manifest entry
+- `analysis_path`: repo-relative path of this analysis-state artifact
+- `status`: string const `"accepted"`
+- `fingerprint`: deterministic stage fingerprint object
+- `backend`: backend metadata object
+- `analysis`: validated `experiment_analysis` object
+- `diagnostics`: empty array
+- `raw_output_sha256`: hash of the backend response body
 
 Failed state:
 
-- `schema_version`
-- `artifact_type`
-- `question_path`
-- `experiment_path`
-- `analysis_path`
-- `status: "failed"`
-- `fingerprint`
-- `backend`
-- `analysis: null`
-- `diagnostics`
-- `raw_output_sha256`
+- `schema_version`: integer const `1`
+- `artifact_type`: string const `"analysis_state"`
+- `question_path`: repo-relative path from the manifest entry
+- `experiment_path`: repo-relative path from the manifest entry
+- `analysis_path`: repo-relative path of this analysis-state artifact
+- `status`: string const `"failed"`
+- `fingerprint`: deterministic stage fingerprint object
+- `backend`: backend metadata object
+- `analysis`: null
+- `diagnostics`: non-empty array of diagnostic objects
+- `raw_output_sha256`: hash of the backend response body, or null when the
+  backend produced no response bytes
 
 Failure diagnostics are bounded and structured. They include validation codes,
 messages, source paths and selectors when applicable, backend return metadata
 when applicable, and a hash of the raw backend output. They do not include the
 full raw model response.
+
+Backend metadata object:
+
+- `name`: `"fake"` or `"codex-exec"`
+- `status`: `"completed"`, `"failed"`, or `"timed_out"`
+- `return_code`: integer or null
+- `stdout_preview`: bounded string or null
+- `stderr_preview`: bounded string or null
+
+Diagnostic object:
+
+- `code`: stable machine-readable string
+- `message`: short human-readable string without absolute paths
+- `path`: repo-relative path or null
+- `selector_type`: `"json_pointer"` or null
+- `selector`: selector string or null
+- `detail`: optional object for bounded structured metadata
+
+Fingerprint object:
+
+- `stage`: object with `name: "analyze"` and integer `version`
+- `schema_version`: integer
+- `config_sha256`: hash of relevant analysis config
+- `source_files`: hash records for source files used to validate claims
+- `prerequisite_artifacts`: hash records for manifest, inventory, and evidence
+- `extra_inputs`: backend name, backend configuration, output hash, and
+  accepted-analysis or diagnostics hash
+- `fingerprint_sha256`: hash of the fingerprint payload
+
+The exact serialization should reuse the existing Milestone 1 fingerprint helper
+where possible.
 
 ## Experiment Analysis Schema
 
@@ -128,19 +182,19 @@ inside an accepted analysis state only if all schema and claim checks pass.
 
 Required fields:
 
-- `schema_version`
-- `artifact_type: "experiment_analysis"`
-- `question_path`
-- `experiment_path`
-- `title`
-- `execution_status`
-- `hypothesis_verdict`
-- `objective`
-- `answer`
-- `meaning`
-- `limitations`
-- `confidence`
-- `claims`
+- `schema_version`: integer const `1`
+- `artifact_type`: string const `"experiment_analysis"`
+- `question_path`: repo-relative path matching the manifest entry
+- `experiment_path`: repo-relative path matching the manifest entry
+- `title`: non-empty string
+- `execution_status`: enum listed below
+- `hypothesis_verdict`: enum listed below
+- `objective`: non-empty string
+- `answer`: non-empty string
+- `meaning`: non-empty string
+- `limitations`: array of strings
+- `confidence`: enum listed below
+- `claims`: array of measured or derived claim objects
 
 Allowed execution statuses:
 
@@ -164,6 +218,9 @@ Allowed confidence values:
 - `medium`
 - `low`
 
+The JSON Schema should reject unknown top-level properties and unknown claim
+properties. Claim IDs must be unique within one analysis.
+
 ## Claim Validation
 
 M2 validates structured claims. Prose fields are schema-bounded strings but are
@@ -180,6 +237,14 @@ Measured claims require:
 - `value_type`
 - optional `unit`
 - one source object
+
+Allowed `value_type` values are:
+
+- `string`
+- `number`
+- `integer`
+- `boolean`
+- `null`
 
 The source must include:
 
@@ -199,6 +264,13 @@ Validation rules:
 7. The selector resolves to a scalar JSON-compatible value.
 8. The selected value equals the claim value.
 9. The selected value type matches `value_type`.
+
+Type matching follows JSON Schema scalar semantics with one deliberate widening:
+an integer source value may satisfy a claim with `value_type: "number"`, but a
+non-integral number may not satisfy `value_type: "integer"`.
+
+Measured numeric equality is exact after JSON/YAML parsing. M2 does not apply
+tolerances, rounding, or unit conversion for measured claims.
 
 Cross-question and unrelated-experiment source paths are rejected in M2.
 
@@ -227,6 +299,12 @@ Validation rules:
 
 The implementation should evaluate formulas with a small safe parser, not
 Python `eval`.
+
+Derived arithmetic should use Python `Decimal` or an equivalent exact decimal
+strategy over JSON numeric string representations. A derived integer claim must
+produce an integral result. A derived number claim must compare exactly to the
+reported numeric value after decimal normalization. M2 does not support
+approximate floating-point tolerances.
 
 ## Backend Interface
 
@@ -261,9 +339,35 @@ class AnalysisBackend:
 Both real and fake backends feed the same parser, schema validator, claim
 validator, and analysis-state writer.
 
+## Implementation Units
+
+Milestone 2 should be implemented as small units with clear inputs and outputs:
+
+- `analysis.py`: orchestration for one selected experiment. It loads config,
+  resolves the manifest entry, runs preflight, invokes the backend, validates,
+  writes state, and returns a command result.
+- `analysis_backends.py` or `backends/analysis.py`: backend protocol plus
+  `FakeBackend` and `CodexExecBackend`. It returns backend results but does not
+  validate claims or write stable artifacts.
+- `analysis_validation.py`: schema-adjacent validation for measured and derived
+  claims. It accepts a parsed analysis object plus repo/config context and
+  returns diagnostics or a validated analysis.
+- `formula.py`: safe arithmetic parser/evaluator for derived claims. It has no
+  filesystem dependencies.
+- `analysis_state.py` or local helpers in `analysis.py`: builds deterministic
+  accepted/failed state payloads, fingerprints them, computes mirrored output
+  paths, and performs atomic writes.
+- `schemas/experiment-analysis.schema.json`: model response contract.
+- `schemas/analysis-state.schema.json`: stable generated artifact contract.
+
+These units should not change M1 renderer, audit, or build behavior in M2.
+
 ## Fake Backend
 
 `FakeBackend` reads the response JSON specified by `--fake-response`.
+`--fake-response` resolves relative to the current working directory, not the
+target `--repo`, matching the existing `uv run paperctl ...` development usage
+where fixture paths are supplied from the framework repository.
 
 It is used for the default test suite and manual dry runs. It must not bypass
 schema or claim validation.
@@ -284,6 +388,23 @@ Fixture responses cover:
 `CodexExecBackend` runs `codex exec` as an argument-array subprocess with the
 target research repo as the working directory. It must not use `shell=True`.
 
+The backend writes the prompt to a temporary prompt file outside the target repo
+and requests the final model message in a temporary output file outside the
+target repo. Conceptual invocation:
+
+```bash
+codex exec \
+  --ephemeral \
+  --sandbox read-only \
+  --output-last-message /tmp/paperctl-analysis-response.json \
+  --file /tmp/paperctl-analysis-prompt.md
+```
+
+If the installed `codex exec` surface requires a different non-interactive
+prompt transport, the implementation may adapt the argument array, but the
+response contract remains: the backend response body is the UTF-8 contents of a
+single final-message file expected to contain one JSON object.
+
 The worker prompt is narrow and includes:
 
 - primary question path
@@ -300,6 +421,16 @@ The worker prompt is narrow and includes:
 The backend requests read-only sandboxing when the available `codex exec`
 surface supports it. If the subprocess fails, times out, returns invalid JSON,
 or does not produce a final response, `analyze` writes a failed analysis state.
+
+Parser rules shared by fake and real backends:
+
+1. Read the backend response body as UTF-8 bytes.
+2. Parse exactly one top-level JSON object.
+3. Reject empty output, invalid UTF-8, invalid JSON, arrays, strings, numbers,
+   and multiple concatenated JSON documents.
+4. Treat stdout and stderr as diagnostics only; never parse analysis JSON from
+   stdout or stderr.
+5. Hash the raw response bytes as `raw_output_sha256`.
 
 ## Data Flow
 
@@ -329,6 +460,7 @@ Missing or stale deterministic prerequisites:
 - exit with deterministic failure
 - do not invoke backend
 - do not write an analysis-state artifact
+- leave any existing analysis-state artifact unchanged
 
 Backend failure:
 
@@ -353,6 +485,15 @@ Accepted analysis:
 - exit success
 
 `analyze` must not modify experiment artifacts, `PAPER.draft.md`, or `PAPER.md`.
+
+Exit codes follow existing CLI conventions:
+
+- `0`: accepted analysis written
+- `2`: deterministic preflight failure, invalid backend JSON, schema failure,
+  or claim-validation failure
+- `3`: backend process failed or timed out after invocation
+- `4`: invalid command usage
+- `5`: missing `codex` executable or required external backend capability
 
 ## CLI
 
