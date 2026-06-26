@@ -636,6 +636,19 @@ def test_analysis_state_schema_requires_stage_fingerprint_contract():
             validate_artifact("analysis-state.schema.json", state)
 
 
+def test_analysis_state_fingerprint_allows_non_empty_extra_inputs():
+    from paperctl._support.schema import validate_artifact
+
+    state = _analysis_state()
+    state["fingerprint"]["extra_inputs"] = {
+        "backend_name": "fake",
+        "raw_output_sha256": "sha256:" + "3" * 64,
+        "retry": {"attempt": 1, "repair_applied": False},
+    }
+
+    validate_artifact("analysis-state.schema.json", state)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

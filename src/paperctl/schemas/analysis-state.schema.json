@@ -165,7 +165,7 @@
         "prerequisite_artifacts_sha256": { "$ref": "#/$defs/hash" },
         "extra_inputs": {
           "type": "object",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "extra_inputs_sha256": { "$ref": "#/$defs/hash" },
         "fingerprint_sha256": { "$ref": "#/$defs/hash" }
