@@ -62,6 +62,22 @@ def test_rejects_float_literals_that_ast_would_round_to_allowed_values(formula):
 @pytest.mark.parametrize(
     "formula",
     [
+        "0x64",
+        "0b1",
+        "1_00",
+        "0_0",
+    ],
+)
+def test_rejects_alternate_integer_spellings(formula):
+    with pytest.raises(FormulaError) as excinfo:
+        evaluate_formula_exact(formula, {}, [])
+
+    assert excinfo.value.code == "invalid_numeric_literal"
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
         "a # + missing",
         "a\n# + missing",
         "a\n",

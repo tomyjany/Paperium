@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import io
+import tokenize
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any
@@ -11,6 +13,7 @@ from typing import Any
 FORMULA_EVALUATOR_VERSION = 1
 
 _ALLOWED_LITERALS = {Decimal("0"), Decimal("1"), Decimal("100")}
+_ALLOWED_LITERAL_TOKENS = {"0", "1", "100"}
 
 
 class FormulaError(ValueError):
@@ -19,6 +22,19 @@ class FormulaError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _validate_numeric_tokens(formula: str) -> None:
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(formula).readline)
+        for token in tokens:
+            if token.type == tokenize.NUMBER and token.string not in _ALLOWED_LITERAL_TOKENS:
+                raise FormulaError(
+                    "invalid_numeric_literal",
+                    f"Formula contains unsupported numeric literal {token.string!r}.",
+                )
+    except tokenize.TokenError as exc:
+        raise FormulaError("invalid_syntax", "Formula is not valid token syntax.") from exc
 
 
 def evaluate_formula_exact(
@@ -32,6 +48,7 @@ def evaluate_formula_exact(
         raise FormulaError(
             "invalid_syntax", "Formula must be a single expression without comments."
         )
+    _validate_numeric_tokens(formula)
 
     try:
         tree = ast.parse(formula, mode="eval")
