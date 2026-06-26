@@ -199,6 +199,33 @@ def test_analysis_prompt_redacts_embedded_windows_absolute_and_temp_paths():
     assert "[omitted unsafe path]" in prompt
 
 
+def test_analysis_prompt_redacts_exact_windows_root_relative_and_unc_paths():
+    context = _job_context()
+    context["evidence_packet_path"] = r"\Users\tom\target-repo\result.json"
+    packet = _evidence_packet()
+    packet["canonical_facts"][0]["source"]["path"] = r"\\server\share\result.json"
+
+    prompt = build_analysis_prompt(context, packet)
+
+    assert r"\\Users\\tom\\target-repo\\result.json" not in prompt
+    assert r"\\\\server\\share\\result.json" not in prompt
+    assert "[omitted unsafe path]" in prompt
+
+
+def test_analysis_prompt_redacts_embedded_windows_root_relative_and_unc_paths():
+    packet = _evidence_packet()
+    packet["diagnostics"] = [
+        r"loaded result from \Users\tom\target-repo\result.json",
+        r"copied result from \\server\share\result.json",
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert r"\\Users\\tom\\target-repo\\result.json" not in prompt
+    assert r"\\\\server\\share\\result.json" not in prompt
+    assert "[omitted unsafe path]" in prompt
+
+
 def test_analysis_prompt_handles_missing_question_readme_metadata():
     context = _job_context()
     context["question_readme_path"] = None

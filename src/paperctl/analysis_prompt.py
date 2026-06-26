@@ -41,7 +41,7 @@ _TIMESTAMP_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+-]+Z?)?\b",
 )
 _UNSAFE_PATH_PATTERN = re.compile(
-    r"(?<![\w.-])(?:[a-z]:[\\/]|~|/|(?:\.\.[\\/])+|tmp[\\/])[^\s\"']*",
+    r"(?<![\w.-])(?:[a-z]:[\\/]|~|[\\/]|(?:\.\.[\\/])+|tmp[\\/])[^\s\"']*",
     re.IGNORECASE,
 )
 _TRAVERSAL_PATH_PATTERN = re.compile(
@@ -146,6 +146,7 @@ def _sanitize_dict_item_for_prompt(parent: dict[Any, Any], key: str, value: Any)
 def _is_unsafe_path(value: str) -> bool:
     return (
         value.startswith("/")
+        or value.startswith("\\")
         or value.startswith("~")
         or re.match(r"^[a-z]:[\\/]", value, re.IGNORECASE) is not None
         or "\\tmp\\" in value.lower()
