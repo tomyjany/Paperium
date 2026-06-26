@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 from paperctl.analysis_validation import AnalysisDiagnostic
 
@@ -97,8 +97,17 @@ CODE_CODEX_HELP_FAILED = "codex_help_failed"
 CODE_CODEX_TEMP_DIR_UNAVAILABLE = "codex_temp_dir_unavailable"
 
 
+class _CodexCapabilityCheck(NamedTuple):
+    diagnostics: list[AnalysisDiagnostic]
+    approval_flag_scope: Literal["exec", "global"] | None
+
+
 def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
     """Verify the local codex executable supports the constrained exec contract."""
+    return _probe_codex_exec_capabilities(codex_bin).diagnostics
+
+
+def _probe_codex_exec_capabilities(codex_bin: str) -> _CodexCapabilityCheck:
     args = [codex_bin, "exec", "--help"]
     try:
         result = subprocess.run(
@@ -108,21 +117,27 @@ def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
             text=True,
         )
     except FileNotFoundError as exc:
-        return [
-            AnalysisDiagnostic(
-                code=CODE_CODEX_MISSING_DEPENDENCY,
-                message=f"Codex executable missing dependency: {codex_bin}",
-                detail={"error": str(exc)},
-            )
-        ]
+        return _CodexCapabilityCheck(
+            [
+                AnalysisDiagnostic(
+                    code=CODE_CODEX_MISSING_DEPENDENCY,
+                    message=f"Codex executable missing dependency: {codex_bin}",
+                    detail={"error": str(exc)},
+                )
+            ],
+            None,
+        )
     except OSError as exc:
-        return [
-            AnalysisDiagnostic(
-                code=CODE_CODEX_LAUNCH_FAILED,
-                message=f"Codex exec capability probe launch failed: {exc}",
-                detail={"error": str(exc)},
-            )
-        ]
+        return _CodexCapabilityCheck(
+            [
+                AnalysisDiagnostic(
+                    code=CODE_CODEX_LAUNCH_FAILED,
+                    message=f"Codex exec capability probe launch failed: {exc}",
+                    detail={"error": str(exc)},
+                )
+            ],
+            None,
+        )
 
     diagnostics: list[AnalysisDiagnostic] = []
     if result.returncode != 0:
@@ -140,8 +155,6 @@ def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
         "--output-last-message",
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
     )
     for required in required_substrings:
         if required not in help_text:
@@ -152,7 +165,61 @@ def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
                     detail={"required": required},
                 )
             )
-    return diagnostics
+
+    approval_flag_scope, approval_diagnostics = _codex_approval_flag_scope(codex_bin, help_text)
+    diagnostics.extend(approval_diagnostics)
+    return _CodexCapabilityCheck(diagnostics, approval_flag_scope)
+
+
+def _codex_approval_flag_scope(
+    codex_bin: str, exec_help_text: str
+) -> tuple[Literal["exec", "global"] | None, list[AnalysisDiagnostic]]:
+    if _has_no_approval_help(exec_help_text):
+        return "exec", []
+
+    args = [codex_bin, "--help"]
+    try:
+        result = subprocess.run(
+            args,
+            shell=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return None, [
+            AnalysisDiagnostic(
+                code=CODE_CODEX_LAUNCH_FAILED,
+                message=f"Codex top-level capability probe launch failed: {exc}",
+                detail={"error": str(exc)},
+            )
+        ]
+
+    diagnostics: list[AnalysisDiagnostic] = []
+    if result.returncode != 0:
+        diagnostics.append(
+            AnalysisDiagnostic(
+                code=CODE_CODEX_HELP_FAILED,
+                message="Codex exec capability probe failed.",
+                detail={"return_code": result.returncode},
+            )
+        )
+
+    help_text = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if _has_no_approval_help(help_text):
+        return "global", diagnostics
+
+    diagnostics.append(
+        AnalysisDiagnostic(
+            code=CODE_CODEX_CAPABILITY_MISSING,
+            message="Codex help does not advertise required --ask-for-approval never support.",
+            detail={"required": "--ask-for-approval never"},
+        )
+    )
+    return None, diagnostics
+
+
+def _has_no_approval_help(help_text: str) -> bool:
+    return "--ask-for-approval" in help_text and "never" in help_text
 
 
 class CodexExecBackend:
@@ -162,15 +229,24 @@ class CodexExecBackend:
         self.codex_bin = codex_bin
 
     def analyze(self, job: AnalysisJob) -> AnalysisBackendResult:
-        diagnostics = check_codex_exec_capabilities(self.codex_bin)
-        if diagnostics:
+        capability_check = _probe_codex_exec_capabilities(self.codex_bin)
+        if capability_check.diagnostics:
             return AnalysisBackendResult(
                 backend_name=self.name,
                 status="failed",
                 raw_response=None,
                 return_code=None,
                 stdout=None,
-                stderr=_format_diagnostics(diagnostics),
+                stderr=_format_diagnostics(capability_check.diagnostics),
+            )
+        if capability_check.approval_flag_scope is None:
+            return AnalysisBackendResult(
+                backend_name=self.name,
+                status="failed",
+                raw_response=None,
+                return_code=None,
+                stdout=None,
+                stderr=f"{CODE_CODEX_CAPABILITY_MISSING}: Codex approval flag scope unavailable",
             )
 
         response_temp_dir, temp_dir_error = _create_response_temp_dir(job.repo)
@@ -186,20 +262,12 @@ class CodexExecBackend:
 
         with response_temp_dir as tmp_dir:
             response_path = Path(tmp_dir) / "codex-final-message.json"
-            args = [
-                self.codex_bin,
-                "exec",
-                "--ephemeral",
-                "--sandbox",
-                "read-only",
-                "--ask-for-approval",
-                "never",
-                "--output-schema",
-                str(job.output_schema_path),
-                "--output-last-message",
-                str(response_path),
-                "-",
-            ]
+            args = _codex_exec_args(
+                codex_bin=self.codex_bin,
+                approval_flag_scope=capability_check.approval_flag_scope,
+                output_schema_path=job.output_schema_path,
+                response_path=response_path,
+            )
 
             try:
                 result = subprocess.run(
@@ -264,6 +332,44 @@ class CodexExecBackend:
                 stdout=result.stdout,
                 stderr=result.stderr,
             )
+
+
+def _codex_exec_args(
+    *,
+    codex_bin: str,
+    approval_flag_scope: Literal["exec", "global"],
+    output_schema_path: Path,
+    response_path: Path,
+) -> list[str]:
+    if approval_flag_scope == "global":
+        return [
+            codex_bin,
+            "--ask-for-approval",
+            "never",
+            "exec",
+            "--ephemeral",
+            "--sandbox",
+            "read-only",
+            "--output-schema",
+            str(output_schema_path),
+            "--output-last-message",
+            str(response_path),
+            "-",
+        ]
+    return [
+        codex_bin,
+        "exec",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
+        "--output-schema",
+        str(output_schema_path),
+        "--output-last-message",
+        str(response_path),
+        "-",
+    ]
 
 
 def _format_diagnostics(diagnostics: list[AnalysisDiagnostic]) -> str:

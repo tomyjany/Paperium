@@ -142,6 +142,15 @@ def _codex_help(
     return "\n".join(parts)
 
 
+def _codex_top_level_help(*, ask_for_approval: bool = True, never: bool = True) -> str:
+    parts = ["Usage: codex [OPTIONS] [PROMPT]"]
+    if ask_for_approval:
+        parts.append("--ask-for-approval <POLICY>")
+    if never:
+        parts.append("never")
+    return "\n".join(parts)
+
+
 def _completed(
     args: list[str],
     *,
@@ -166,6 +175,27 @@ def _successful_codex_run(monkeypatch, *, raw_response: bytes = b'{"analysis": t
         calls.append((args, kwargs))
         if args == ["codex-test", "exec", "--help"]:
             return _completed(args, stdout=_codex_help())
+        response_path = Path(args[args.index("--output-last-message") + 1])
+        response_paths.append(response_path)
+        response_path.write_bytes(raw_response)
+        return _completed(args, stdout='{"stdout": "metadata only"}', stderr="diagnostic text")
+
+    _install_subprocess_run(monkeypatch, fake_run)
+    return calls, response_paths
+
+
+def _successful_codex_run_with_global_approval(
+    monkeypatch, *, raw_response: bytes = b'{"analysis": true}'
+):
+    calls = []
+    response_paths: list[Path] = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if args == ["codex-test", "exec", "--help"]:
+            return _completed(args, stdout=_codex_help(ask_for_approval=False, never=False))
+        if args == ["codex-test", "--help"]:
+            return _completed(args, stdout=_codex_top_level_help())
         response_path = Path(args[args.index("--output-last-message") + 1])
         response_paths.append(response_path)
         response_path.write_bytes(raw_response)
@@ -238,13 +268,18 @@ def test_codex_capability_failures_refuse_before_model_invocation(
         calls.append(args)
         if args == ["codex-test", "exec", "--help"]:
             return _completed(args, stdout=help_text)
+        if args == ["codex-test", "--help"]:
+            return _completed(args, stdout=_codex_top_level_help(ask_for_approval=False))
         raise AssertionError("model invocation should not run")
 
     _install_subprocess_run(monkeypatch, fake_run)
 
     result = CodexExecBackend(codex_bin="codex-test").analyze(_job(tmp_path))
 
-    assert calls == [["codex-test", "exec", "--help"]]
+    expected_calls = [["codex-test", "exec", "--help"]]
+    if expected in {"--ask-for-approval", "never"}:
+        expected_calls.append(["codex-test", "--help"])
+    assert calls == expected_calls
     assert result.status == "failed"
     assert result.raw_response is None
     assert result.stderr is not None
@@ -296,6 +331,51 @@ def test_codex_command_uses_required_flags_stdin_and_schema(tmp_path, monkeypatc
         "timeout": job.timeout_seconds,
         "shell": False,
     }
+
+
+def test_codex_command_supports_global_approval_flag_stdin_and_schema(tmp_path, monkeypatch):
+    calls, response_paths = _successful_codex_run_with_global_approval(monkeypatch)
+
+    job = _job(tmp_path)
+    result = CodexExecBackend(codex_bin="codex-test").analyze(job)
+
+    assert result.status == "completed"
+    assert result.raw_response == b'{"analysis": true}'
+
+    assert calls[0][0] == ["codex-test", "exec", "--help"]
+    assert calls[1][0] == ["codex-test", "--help"]
+    args, kwargs = calls[2]
+    assert args[:4] == ["codex-test", "--ask-for-approval", "never", "exec"]
+    assert "--ephemeral" in args
+    assert args[args.index("--sandbox") + 1] == "read-only"
+    assert args[args.index("--output-schema") + 1] == str(job.output_schema_path)
+    assert args[args.index("--output-last-message") + 1] == str(response_paths[0])
+    assert args[-1] == "-"
+    assert kwargs["input"] == job.prompt
+
+
+def test_codex_capability_failure_when_no_approval_unavailable_in_exec_or_global_help(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args == ["codex-test", "exec", "--help"]:
+            return _completed(args, stdout=_codex_help(ask_for_approval=False, never=False))
+        if args == ["codex-test", "--help"]:
+            return _completed(args, stdout=_codex_top_level_help(ask_for_approval=False))
+        raise AssertionError("model invocation should not run")
+
+    _install_subprocess_run(monkeypatch, fake_run)
+
+    result = CodexExecBackend(codex_bin="codex-test").analyze(_job(tmp_path))
+
+    assert calls == [["codex-test", "exec", "--help"], ["codex-test", "--help"]]
+    assert result.status == "failed"
+    assert result.raw_response is None
+    assert result.stderr is not None
+    assert "--ask-for-approval" in result.stderr
 
 
 def test_codex_response_temp_path_stays_outside_repo_when_default_temp_is_inside_repo(
