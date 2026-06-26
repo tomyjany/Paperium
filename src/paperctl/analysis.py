@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
 from jsonschema import ValidationError
 
 from paperctl import config as config_module
-from paperctl import schemas
 from paperctl._support.paths import is_repo_relative_posix
 
 
@@ -214,43 +212,3 @@ def _analysis_output_path(repo: Path, config: dict, experiment: str) -> _PathRes
         if index < len(parts) - 1 and not current.is_dir():
             return _PathResult(None, "unsafe_analysis_path")
     return _PathResult(relative, None)
-
-
-def _invoke_backend(
-    *,
-    backend: object,
-    repo: Path,
-    config: dict,
-    manifest_entry: dict,
-    evidence_packet: dict,
-) -> None:
-    from paperctl.analysis_backends import AnalysisJob
-    from paperctl.analysis_prompt import build_analysis_prompt
-
-    context = {
-        "repo": str(repo),
-        "temporary_prompt_path": None,
-        "generated_at": None,
-        "question_path": manifest_entry["question_path"],
-        "question_readme_path": manifest_entry.get("question_readme_path"),
-        "question_readme_hash": manifest_entry.get("question_readme_sha256"),
-        "experiment_path": manifest_entry["experiment_path"],
-        "inventory_path": manifest_entry["inventory_path"],
-        "evidence_packet_path": manifest_entry["evidence_path"],
-        "output_schema_name": "experiment-analysis.schema.json",
-    }
-    job = AnalysisJob(
-        repo=repo,
-        config=config,
-        question_path=manifest_entry["question_path"],
-        question_readme_path=manifest_entry.get("question_readme_path"),
-        question_readme_hash=manifest_entry.get("question_readme_sha256"),
-        experiment_path=manifest_entry["experiment_path"],
-        inventory_path=manifest_entry["inventory_path"],
-        evidence_path=manifest_entry["evidence_path"],
-        output_schema_path=resources.files(schemas).joinpath("experiment-analysis.schema.json"),
-        prompt=build_analysis_prompt(context, evidence_packet),
-        timeout_seconds=600,
-        backend_options={},
-    )
-    backend.analyze(job)  # type: ignore[attr-defined]

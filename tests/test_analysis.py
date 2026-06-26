@@ -310,6 +310,7 @@ def test_analysis_preflight_unsafe_analysis_path_rejects_symlink_parent_before_b
         existing_state=existing,
     )
     assert symlink_parent.is_symlink()
+    assert mirrored_state.read_bytes() == existing
 
 
 def test_analysis_preflight_unsafe_analysis_path_rejects_final_symlink_before_backend(
@@ -330,6 +331,7 @@ def test_analysis_preflight_unsafe_analysis_path_rejects_final_symlink_before_ba
         existing_state=existing,
     )
     assert analysis_path.is_symlink()
+    assert target.read_bytes() == existing
 
 
 def test_analysis_preflight_unsafe_analysis_path_rejects_parent_file_collision_before_backend(
