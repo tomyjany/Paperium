@@ -24,8 +24,8 @@ Extend the existing `paperctl analyze` command into a one-or-many experiment com
 Supported forms:
 
 ```bash
-paperctl analyze EXPERIMENT_PATH [EXPERIMENT_PATH ...]
-paperctl analyze --experiments-menu
+paperctl --repo /path/to/target analyze EXPERIMENT_PATH [EXPERIMENT_PATH ...]
+paperctl --repo /path/to/target analyze --experiments-menu
 ```
 
 Options:
@@ -43,10 +43,11 @@ Rules:
 - At least one explicit experiment path is required unless `--experiments-menu` is used.
 - A single explicit experiment path remains the compatible Milestone 2 case.
 - `--experiments-menu` requires an interactive TTY and fails clearly in non-TTY contexts.
+- `--repo` scopes manifest discovery, evidence lookup, cache checks, and analysis output paths to the target research repository. If `--repo` is omitted, `paperctl` resolves the current Git root using the existing command behavior.
 
 ## Selection
 
-Explicit experiment paths are resolved against the discovered manifest. A path that exists in the target repository but is not a manifest experiment is rejected before backend invocation. Invalid paths fail preflight rather than being guessed or normalized implicitly.
+Explicit experiment paths are repository-relative paths resolved against the discovered manifest for the selected target repo. A path that exists in the target repository but is not a manifest experiment is rejected before backend invocation. Invalid paths fail preflight rather than being guessed or normalized implicitly.
 
 The interactive menu loads the current manifest and displays experiments grouped by question. It shows every discovered experiment, including blocked or non-candidate entries, but only runnable experiments may be selected.
 
@@ -60,12 +61,15 @@ Disabled rows include the refusal reason, such as blocked, needs human review, m
 
 The first implementation target is a Rich plus standard-library checkbox-style terminal picker. If Rich cannot support a clean checkbox interaction without a new dependency, M3 should provide a small internal TTY picker rather than adding a dependency.
 
+Before scheduling begins, M3 validates the entire selected set. If any explicit path is invalid, non-manifest, or non-runnable, the command fails before launching backend work for any experiment. The menu prevents disabled rows from being selected, so menu-based selections should already contain runnable experiments only.
+
 ## Scheduling
 
 Selected experiments flow through one batch runner regardless of whether they came from explicit paths or the menu.
 
 The batch runner:
 
+- Starts only after selection validation succeeds for the full selected set.
 - Runs up to `--jobs` experiments concurrently.
 - Defaults to `--jobs 2`.
 - Supports `--jobs 1` for sequential behavior.
@@ -133,6 +137,8 @@ Backend invocation must never occur for:
 - normalized evidence whose preanalysis disposition is not `analysis_candidate`
 - accepted up-to-date artifacts unless `--force` is passed
 
+For explicit path selection, any invalid, non-manifest, or non-runnable experiment aborts the whole batch before backend invocation. Cache skips do not abort the batch.
+
 ## Test Plan
 
 Add tests for:
@@ -142,7 +148,8 @@ Add tests for:
 - Explicit paths and `--experiments-menu` are mutually exclusive.
 - Missing explicit paths without `--experiments-menu` fail clearly.
 - Invalid or non-manifest experiment paths fail before backend invocation.
-- Blocked and non-candidate experiments fail before backend invocation when explicitly requested.
+- Invalid, non-manifest, blocked, and non-candidate explicit selections abort the full batch before backend invocation.
+- `--repo` scopes manifest discovery, evidence lookup, cache checks, and analysis output paths.
 - The menu requires a TTY.
 - The menu shows disabled non-runnable experiments with reasons.
 - Accepted up-to-date analyses are skipped by default.
