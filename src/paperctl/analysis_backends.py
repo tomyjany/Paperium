@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -92,6 +93,7 @@ class FakeBackend:
 CODE_CODEX_MISSING_DEPENDENCY = "codex_missing_dependency"
 CODE_CODEX_CAPABILITY_MISSING = "codex_capability_missing"
 CODE_CODEX_HELP_FAILED = "codex_help_failed"
+CODE_CODEX_TEMP_DIR_UNAVAILABLE = "codex_temp_dir_unavailable"
 
 
 def check_codex_exec_capabilities(codex_bin: str) -> list[AnalysisDiagnostic]:
@@ -161,7 +163,18 @@ class CodexExecBackend:
                 stderr=_format_diagnostics(diagnostics),
             )
 
-        with tempfile.TemporaryDirectory(prefix="paperctl-analysis-") as tmp_dir:
+        response_temp_dir, temp_dir_error = _create_response_temp_dir(job.repo)
+        if response_temp_dir is None:
+            return AnalysisBackendResult(
+                backend_name=self.name,
+                status="failed",
+                raw_response=None,
+                return_code=None,
+                stdout=None,
+                stderr=temp_dir_error,
+            )
+
+        with response_temp_dir as tmp_dir:
             response_path = Path(tmp_dir) / "codex-final-message.json"
             args = [
                 self.codex_bin,
@@ -236,6 +249,76 @@ class CodexExecBackend:
 
 def _format_diagnostics(diagnostics: list[AnalysisDiagnostic]) -> str:
     return "\n".join(f"{diagnostic.code}: {diagnostic.message}" for diagnostic in diagnostics)
+
+
+def _create_response_temp_dir(
+    repo: Path,
+) -> tuple[tempfile.TemporaryDirectory[str] | None, str | None]:
+    repo_resolved = repo.resolve(strict=False)
+    rejected: list[str] = []
+
+    for parent in _response_temp_parent_candidates():
+        parent_resolved = parent.resolve(strict=False)
+        if _is_relative_to(parent_resolved, repo_resolved):
+            rejected.append(f"{parent_resolved} is inside the target repo")
+            continue
+
+        try:
+            temp_dir = tempfile.TemporaryDirectory(
+                prefix="paperctl-analysis-",
+                dir=parent,
+            )
+        except OSError as exc:
+            rejected.append(f"{parent_resolved} could not be used: {exc}")
+            continue
+
+        temp_dir_resolved = Path(temp_dir.name).resolve(strict=False)
+        if _is_relative_to(temp_dir_resolved, repo_resolved):
+            rejected.append(f"{temp_dir_resolved} is inside the target repo")
+            temp_dir.cleanup()
+            continue
+
+        return temp_dir, None
+
+    detail = "; ".join(rejected) if rejected else "no temp directory candidates"
+    return (
+        None,
+        (
+            f"{CODE_CODEX_TEMP_DIR_UNAVAILABLE}: Could not create Codex final message "
+            f"temp directory outside the target repo: {detail}"
+        ),
+    )
+
+
+def _response_temp_parent_candidates() -> list[Path]:
+    candidates = [
+        Path(tempfile.gettempdir()),
+        *(Path(value) for value in _temp_env_values()),
+        Path("/tmp"),
+        Path("/var/tmp"),
+        Path("/usr/tmp"),
+    ]
+    return _deduplicate_paths(candidates)
+
+
+def _temp_env_values() -> list[str]:
+    return [value for name in ("TMPDIR", "TEMP", "TMP") if (value := os.getenv(name))]
+
+
+def _deduplicate_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    deduplicated: list[Path] = []
+    for path in paths:
+        key = str(path.resolve(strict=False))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(path)
+    return deduplicated
+
+
+def _is_relative_to(path: Path, base: Path) -> bool:
+    return path == base or path.is_relative_to(base)
 
 
 def _append_stderr_detail(stderr: str | None, detail: str) -> str:

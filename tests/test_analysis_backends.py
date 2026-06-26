@@ -281,6 +281,56 @@ def test_codex_command_uses_required_flags_stdin_and_schema(tmp_path, monkeypatc
     }
 
 
+def test_codex_response_temp_path_stays_outside_repo_when_default_temp_is_inside_repo(
+    tmp_path, monkeypatch
+):
+    job = _job(tmp_path)
+    inside_repo_temp = job.repo / "tmp"
+    inside_repo_temp.mkdir(parents=True)
+    monkeypatch.setattr("paperctl.analysis_backends.tempfile.tempdir", str(inside_repo_temp))
+    calls, response_paths = _successful_codex_run(monkeypatch)
+
+    result = CodexExecBackend(codex_bin="codex-test").analyze(job)
+
+    assert result.status == "completed"
+    assert calls[1][0][calls[1][0].index("--output-last-message") + 1] == str(response_paths[0])
+    assert (
+        not response_paths[0].resolve(strict=False).is_relative_to(job.repo.resolve(strict=False))
+    )
+    assert not response_paths[0].exists()
+
+
+def test_codex_fails_before_invocation_when_no_safe_response_temp_dir(tmp_path, monkeypatch):
+    job = _job(tmp_path)
+    unsafe_temp = job.repo / "tmp"
+    unsafe_temp.mkdir(parents=True)
+    calls = []
+
+    monkeypatch.setattr(
+        "paperctl.analysis_backends._response_temp_parent_candidates",
+        lambda: [unsafe_temp],
+        raising=False,
+    )
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args == ["codex-test", "exec", "--help"]:
+            return _completed(args, stdout=_codex_help())
+        raise AssertionError("model invocation should not run")
+
+    _install_subprocess_run(monkeypatch, fake_run)
+
+    result = CodexExecBackend(codex_bin="codex-test").analyze(job)
+
+    assert calls == [["codex-test", "exec", "--help"]]
+    assert result.status == "failed"
+    assert result.raw_response is None
+    assert result.return_code is None
+    assert result.stdout is None
+    assert result.stderr is not None
+    assert "outside the target repo" in result.stderr
+
+
 def test_codex_stdout_stderr_are_metadata_not_raw_analysis(tmp_path, monkeypatch):
     calls = []
 
