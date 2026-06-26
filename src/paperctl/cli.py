@@ -200,6 +200,9 @@ def main(argv: list[str] | None = None) -> int:
             except ExperimentMenuError as exc:
                 print(f"{parser.prog}: {exc}", file=sys.stderr)
                 return INVALID_INVOCATION
+            except InventoryError as exc:
+                print(f"{parser.prog}: {exc}", file=sys.stderr)
+                return DETERMINISTIC_FAILURE
             except ConfigError as exc:
                 print(f"{parser.prog}: {exc}", file=sys.stderr)
                 return DETERMINISTIC_FAILURE

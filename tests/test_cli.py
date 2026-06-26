@@ -366,6 +366,26 @@ def test_analyze_experiments_menu_rejects_empty_selection(monkeypatch, tmp_path,
     assert "no experiments selected" in captured.err
 
 
+def test_analyze_experiments_menu_reports_inventory_errors(monkeypatch, tmp_path, capsys):
+    from paperctl import cli
+    from paperctl.inventory import InventoryError
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "load_config", lambda repo: {"loaded": True})
+
+    def raise_inventory_error(_repo, _config):
+        raise InventoryError("missing discovery manifest: paper/work/manifest.json")
+
+    monkeypatch.setattr(cli, "choose_experiments_interactively", raise_inventory_error)
+
+    exit_code = cli.main(["--repo", str(tmp_path), "analyze", "--experiments-menu"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "missing discovery manifest: paper/work/manifest.json" in captured.err
+
+
 @pytest.mark.parametrize("jobs", ["0", "-1"])
 def test_analyze_jobs_must_be_positive(monkeypatch, tmp_path, capsys, jobs):
     from paperctl import cli
