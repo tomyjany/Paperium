@@ -400,9 +400,13 @@ def _analysis_and_diagnostics_from_backend_result(
                     "claim_validation_failure",
                     "Backend response failed deterministic claim validation.",
                     detail={
+                        "diagnostic_codes": [
+                            item.code for item in claim_diagnostics[:_MAX_DIAGNOSTICS]
+                        ],
+                        "diagnostic_count": len(claim_diagnostics),
                         "diagnostics": [
                             _diagnostic_from_dataclass(item) for item in claim_diagnostics
-                        ]
+                        ],
                     },
                 )
             ]
@@ -754,10 +758,38 @@ def _backend_result_detail(result: AnalysisBackendResult) -> dict[str, Any]:
 def _codex_capability_code(result: AnalysisBackendResult) -> str | None:
     if result.backend_name != "codex-exec" or result.status != "failed":
         return None
-    text = "\n".join(part for part in (result.stderr, result.stdout) if part)
-    for code in sorted(_CODEX_CAPABILITY_CODES):
-        if code in text:
+    if result.return_code is not None:
+        return None
+    for part in (result.stderr, result.stdout):
+        if not part:
+            continue
+        code = _structured_codex_capability_code(part)
+        if code is not None:
             return code
+    return None
+
+
+def _structured_codex_capability_code(text: str) -> str | None:
+    diagnostic_prefixes = (
+        "",
+        "code:",
+        "code=",
+        "diagnostic_code:",
+        "diagnostic_code=",
+        "error_code:",
+        "error_code=",
+    )
+    for line in text.splitlines():
+        stripped = line.strip()
+        for prefix in diagnostic_prefixes:
+            candidate = stripped
+            if prefix:
+                if not stripped.startswith(prefix):
+                    continue
+                candidate = stripped[len(prefix) :].strip()
+            for code in sorted(_CODEX_CAPABILITY_CODES):
+                if candidate == code or candidate.startswith(f"{code}:"):
+                    return code
     return None
 
 

@@ -9,6 +9,7 @@ import yaml
 from conftest import copy_fixture_repo, read_json, run_paperctl
 from paperctl.analysis import analyze_experiment
 from paperctl.analysis_backends import AnalysisBackendResult
+from paperctl.analysis_validation import AnalysisDiagnostic
 from paperctl.analysis_prompt import (
     PROMPT_BUILDER_VERSION,
     PROMPT_TEMPLATE,
@@ -643,6 +644,33 @@ def test_analysis_codex_capability_backend_failures_do_not_write_analysis_state(
     assert (repo / result.analysis_path).read_bytes() == existing
 
 
+def test_analysis_codex_exec_invocation_failure_with_capability_text_writes_failed_state(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    _write_existing_analysis_state(repo, COMPLETED_EXPERIMENT)
+    backend = StubBackend(
+        AnalysisBackendResult(
+            backend_name="codex-exec",
+            status="failed",
+            raw_response=None,
+            return_code=1,
+            stdout=None,
+            stderr="codex exec returned nonzero; stderr mentioned codex_capability_missing",
+        )
+    )
+
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+    state = read_json(repo / result.analysis_path)
+
+    assert result.status == "failed"
+    assert result.diagnostic_codes == ["backend_failure"]
+    assert state["status"] == "failed"
+    assert state["backend"]["return_code"] == 1
+    assert state["analysis"] is None
+    assert _diagnostic_codes(state) == ["backend_failure"]
+    _assert_valid_analysis_state(state)
+
+
 def test_analysis_redacts_backend_previews_and_diagnostic_messages(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     backend = StubBackend(
@@ -683,6 +711,33 @@ def test_analysis_caps_diagnostic_detail_canonical_json_at_4000_bytes(tmp_path):
     _, state = _analyze_with_backend(repo, backend)
 
     detail = state["diagnostics"][0]["detail"]
+    assert len(dump_json_bytes(detail)) <= 4000
+
+
+def test_analysis_claim_validation_failure_retains_subdiagnostic_codes_when_details_are_capped(
+    tmp_path, monkeypatch
+):
+    repo = copy_fixture_repo(tmp_path)
+
+    def many_claim_diagnostics(**_kwargs: Any) -> list[AnalysisDiagnostic]:
+        codes = ["value_mismatch", "unit_mismatch"]
+        return [
+            AnalysisDiagnostic(
+                code=codes[index % len(codes)],
+                message=f"claim diagnostic {index}",
+                detail={"large": "x" * 1000},
+            )
+            for index in range(50)
+        ]
+
+    monkeypatch.setattr("paperctl.analysis.validate_analysis_claims", many_claim_diagnostics)
+    backend = _valid_backend()
+
+    _, state = _analyze_with_backend(repo, backend)
+
+    detail = state["diagnostics"][0]["detail"]
+    assert _diagnostic_codes(state) == ["claim_validation_failure"]
+    assert detail["diagnostic_codes"][:2] == ["value_mismatch", "unit_mismatch"]
     assert len(dump_json_bytes(detail)) <= 4000
 
 
