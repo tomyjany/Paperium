@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -36,6 +37,7 @@ class AnalysisBackendResult:
     return_code: int | None
     stdout: str | None
     stderr: str | None
+    token_usage: dict[str, int] | None = None
 
 
 class AnalysisBackend(Protocol):
@@ -155,6 +157,7 @@ def _probe_codex_exec_capabilities(codex_bin: str) -> _CodexCapabilityCheck:
         "--output-last-message",
         "--sandbox",
         "read-only",
+        "--json",
     )
     for required in required_substrings:
         if required not in help_text:
@@ -280,13 +283,15 @@ class CodexExecBackend:
                     shell=False,
                 )
             except subprocess.TimeoutExpired as exc:
+                stdout = _coerce_subprocess_text(exc.output)
                 return AnalysisBackendResult(
                     backend_name=self.name,
                     status="timed_out",
                     raw_response=None,
                     return_code=None,
-                    stdout=_coerce_subprocess_text(exc.output),
+                    stdout=stdout,
                     stderr=_coerce_subprocess_text(exc.stderr),
+                    token_usage=_extract_token_usage(stdout),
                 )
             except OSError as exc:
                 return AnalysisBackendResult(
@@ -306,6 +311,7 @@ class CodexExecBackend:
                     return_code=result.returncode,
                     stdout=result.stdout,
                     stderr=result.stderr,
+                    token_usage=_extract_token_usage(result.stdout),
                 )
 
             try:
@@ -322,6 +328,7 @@ class CodexExecBackend:
                     return_code=result.returncode,
                     stdout=result.stdout,
                     stderr=stderr,
+                    token_usage=_extract_token_usage(result.stdout),
                 )
 
             return AnalysisBackendResult(
@@ -331,6 +338,7 @@ class CodexExecBackend:
                 return_code=result.returncode,
                 stdout=result.stdout,
                 stderr=result.stderr,
+                token_usage=_extract_token_usage(result.stdout),
             )
 
 
@@ -350,6 +358,7 @@ def _codex_exec_args(
             "--ephemeral",
             "--sandbox",
             "read-only",
+            "--json",
             "--output-schema",
             str(output_schema_path),
             "--output-last-message",
@@ -364,6 +373,7 @@ def _codex_exec_args(
         "read-only",
         "--ask-for-approval",
         "never",
+        "--json",
         "--output-schema",
         str(output_schema_path),
         "--output-last-message",
@@ -374,6 +384,64 @@ def _codex_exec_args(
 
 def _format_diagnostics(diagnostics: list[AnalysisDiagnostic]) -> str:
     return "\n".join(f"{diagnostic.code}: {diagnostic.message}" for diagnostic in diagnostics)
+
+
+def _extract_token_usage(stdout: str | None) -> dict[str, int] | None:
+    if not stdout:
+        return None
+    usage: dict[str, int] | None = None
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        candidate = _find_token_usage(event)
+        if candidate is not None:
+            usage = candidate
+    return usage
+
+
+def _find_token_usage(value: object) -> dict[str, int] | None:
+    if isinstance(value, dict):
+        direct = _normalize_token_usage(value)
+        if direct is not None:
+            return direct
+        for key in ("usage", "token_usage", "token_count"):
+            nested = value.get(key)
+            normalized = _normalize_token_usage(nested)
+            if normalized is not None:
+                return normalized
+        for nested in value.values():
+            found = _find_token_usage(nested)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for nested in value:
+            found = _find_token_usage(nested)
+            if found is not None:
+                return found
+    return None
+
+
+def _normalize_token_usage(value: object) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    fields = (
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    )
+    usage = {
+        field: token_count
+        for field in fields
+        if isinstance((token_count := value.get(field)), int) and token_count >= 0
+    }
+    return usage or None
 
 
 def _create_response_temp_dir(

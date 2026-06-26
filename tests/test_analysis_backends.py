@@ -125,6 +125,7 @@ def _codex_help(
     read_only: bool = True,
     ask_for_approval: bool = True,
     never: bool = True,
+    json_output: bool = True,
 ) -> str:
     parts = ["Usage: codex exec [OPTIONS] -"]
     if output_schema:
@@ -139,6 +140,8 @@ def _codex_help(
         parts.append("--ask-for-approval <POLICY>")
     if never:
         parts.append("never")
+    if json_output:
+        parts.append("--json")
     return "\n".join(parts)
 
 
@@ -182,6 +185,15 @@ def _successful_codex_run(monkeypatch, *, raw_response: bytes = b'{"analysis": t
 
     _install_subprocess_run(monkeypatch, fake_run)
     return calls, response_paths
+
+
+def _json_event(*, usage_key: str = "usage") -> str:
+    return (
+        '{"type":"token_count","'
+        + usage_key
+        + '":{"input_tokens":11,"cached_input_tokens":3,'
+        '"output_tokens":7,"reasoning_output_tokens":2,"total_tokens":18}}\n'
+    )
 
 
 def _successful_codex_run_with_global_approval(
@@ -257,6 +269,7 @@ def test_missing_codex_executable_reports_missing_dependency_before_invocation(
         (_codex_help(read_only=False), "read-only"),
         (_codex_help(ask_for_approval=False), "--ask-for-approval"),
         (_codex_help(never=False), "never"),
+        (_codex_help(json_output=False), "--json"),
     ],
 )
 def test_codex_capability_failures_refuse_before_model_invocation(
@@ -310,6 +323,7 @@ def test_codex_command_uses_required_flags_stdin_and_schema(tmp_path, monkeypatc
     assert result.return_code == 0
     assert result.stdout == '{"stdout": "metadata only"}'
     assert result.stderr == "diagnostic text"
+    assert result.token_usage is None
 
     args, kwargs = calls[1]
     assert isinstance(args, list)
@@ -317,6 +331,7 @@ def test_codex_command_uses_required_flags_stdin_and_schema(tmp_path, monkeypatc
     assert "--ephemeral" in args
     assert args[args.index("--sandbox") + 1] == "read-only"
     assert args[args.index("--ask-for-approval") + 1] == "never"
+    assert "--json" in args
     assert args[args.index("--output-schema") + 1] == str(job.output_schema_path)
     assert args[args.index("--output-last-message") + 1] == str(response_paths[0])
     assert args[-1] == "-"
@@ -330,6 +345,31 @@ def test_codex_command_uses_required_flags_stdin_and_schema(tmp_path, monkeypatc
         "capture_output": True,
         "timeout": job.timeout_seconds,
         "shell": False,
+    }
+
+
+def test_codex_backend_extracts_token_usage_from_json_stdout(tmp_path, monkeypatch):
+    calls, _response_paths = _successful_codex_run(monkeypatch, raw_response=b'{"analysis": true}')
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if args == ["codex-test", "exec", "--help"]:
+            return _completed(args, stdout=_codex_help())
+        response_path = Path(args[args.index("--output-last-message") + 1])
+        response_path.write_bytes(b'{"analysis": true}')
+        return _completed(args, stdout=_json_event(), stderr="")
+
+    _install_subprocess_run(monkeypatch, fake_run)
+
+    result = CodexExecBackend(codex_bin="codex-test").analyze(_job(tmp_path))
+
+    assert result.status == "completed"
+    assert result.token_usage == {
+        "input_tokens": 11,
+        "cached_input_tokens": 3,
+        "output_tokens": 7,
+        "reasoning_output_tokens": 2,
+        "total_tokens": 18,
     }
 
 
@@ -348,6 +388,7 @@ def test_codex_command_supports_global_approval_flag_stdin_and_schema(tmp_path, 
     assert args[:4] == ["codex-test", "--ask-for-approval", "never", "exec"]
     assert "--ephemeral" in args
     assert args[args.index("--sandbox") + 1] == "read-only"
+    assert "--json" in args
     assert args[args.index("--output-schema") + 1] == str(job.output_schema_path)
     assert args[args.index("--output-last-message") + 1] == str(response_paths[0])
     assert args[-1] == "-"

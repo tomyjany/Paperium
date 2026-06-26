@@ -193,7 +193,14 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "status", "return_code", "stdout_preview", "stderr_preview"],
+      "required": [
+        "name",
+        "status",
+        "return_code",
+        "stdout_preview",
+        "stderr_preview",
+        "token_usage"
+      ],
       "properties": {
         "name": { "enum": ["fake", "codex-exec"] },
         "status": { "enum": ["completed", "failed", "timed_out"] },
@@ -214,6 +221,39 @@
             { "type": "string", "maxLength": 4000 },
             { "type": "null" }
           ]
+        },
+        "token_usage": {
+          "anyOf": [
+            { "$ref": "#/$defs/token_usage" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning_output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

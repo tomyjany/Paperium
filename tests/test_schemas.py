@@ -279,6 +279,7 @@ def _analysis_backend(**overrides):
         "return_code": 0,
         "stdout_preview": "analysis ok",
         "stderr_preview": None,
+        "token_usage": None,
     }
     backend.update(overrides)
     return backend
@@ -880,6 +881,10 @@ def test_analysis_state_failed_backend_metadata_accepts_known_statuses(name, sta
         _analysis_backend(return_code="1"),
         _analysis_backend(stdout_preview="\U0001f642" * 4001),
         _analysis_backend(stderr_preview="\U0001f642" * 4001),
+        _analysis_backend(token_usage={}),
+        _analysis_backend(token_usage={"input_tokens": -1}),
+        _analysis_backend(token_usage={"input_tokens": 1.5}),
+        _analysis_backend(token_usage={"unknown_tokens": 1}),
     ],
 )
 def test_analysis_state_schema_rejects_invalid_backend_metadata(backend):

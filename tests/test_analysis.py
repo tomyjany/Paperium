@@ -499,7 +499,42 @@ def test_analysis_backend_success_writes_accepted_analysis_state(tmp_path):
         "return_code": 0,
         "stdout_preview": "ignored stdout",
         "stderr_preview": "ignored stderr",
+        "token_usage": None,
     }
+    _assert_valid_analysis_state(state)
+
+
+def test_analysis_state_records_backend_token_usage(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = StubBackend(
+        AnalysisBackendResult(
+            backend_name="codex-exec",
+            status="completed",
+            raw_response=_analysis_fixture_bytes(),
+            return_code=0,
+            stdout='{"type":"token_count"}',
+            stderr=None,
+            token_usage={
+                "input_tokens": 100,
+                "cached_input_tokens": 25,
+                "output_tokens": 50,
+                "reasoning_output_tokens": 10,
+                "total_tokens": 150,
+            },
+        )
+    )
+
+    _result, state = _analyze_with_backend(repo, backend)
+
+    expected = {
+        "input_tokens": 100,
+        "cached_input_tokens": 25,
+        "output_tokens": 50,
+        "reasoning_output_tokens": 10,
+        "total_tokens": 150,
+    }
+    assert state["backend"]["token_usage"] == expected
+    assert state["fingerprint"]["extra_inputs"]["backend"]["token_usage"] == expected
     _assert_valid_analysis_state(state)
 
 
