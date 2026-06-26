@@ -697,6 +697,48 @@ def test_analysis_does_not_embed_raw_model_output_in_state(tmp_path):
     assert "RAW_MODEL_OUTPUT_SHOULD_NOT_APPEAR" not in json.dumps(state, sort_keys=True)
 
 
+def test_analysis_schema_failure_does_not_embed_raw_model_output_in_state(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    raw = json.dumps(
+        {
+            "schema_version": 1,
+            "artifact_type": "experiment_analysis",
+            "question_path": "questions/q001-throughput",
+            "experiment_path": COMPLETED_EXPERIMENT,
+            "title": "Completed throughput run",
+            "execution_status": "completed",
+            "hypothesis_verdict": "supported",
+            "objective": "Evaluate throughput using the canonical throughput fact.",
+            "answer": "The measured claim throughput_pages_per_second is available.",
+            "meaning": "The run has structured measured evidence.",
+            "limitations": ["No semantic synthesis is rendered in M2."],
+            "confidence": "medium",
+            "claims": "RAW_MODEL_OUTPUT_SHOULD_NOT_APPEAR",
+        }
+    ).encode("utf-8")
+    backend = _valid_backend(raw_response=raw)
+
+    _, state = _analyze_with_backend(repo, backend)
+
+    assert _diagnostic_codes(state) == ["schema_failure"]
+    serialized = json.dumps(state, sort_keys=True)
+    assert "RAW_MODEL_OUTPUT_SHOULD_NOT_APPEAR" not in serialized
+    assert state["diagnostics"][0]["detail"]["validator"]
+
+
+def test_analysis_accepts_single_json_object_with_leading_whitespace(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    raw = b"  \n " + _analysis_fixture_bytes().rstrip() + b" \n"
+    backend = _valid_backend(raw_response=raw)
+
+    result, state = _analyze_with_backend(repo, backend)
+
+    assert result.status == "accepted"
+    assert state["status"] == "accepted"
+    assert state["analysis"] is not None
+    _assert_valid_analysis_state(state)
+
+
 def test_analysis_raw_output_sha256_is_included_when_raw_bytes_exist(tmp_path):
     repo = copy_fixture_repo(tmp_path)
     raw = _analysis_fixture_bytes()
@@ -826,6 +868,47 @@ def test_analysis_fingerprint_changes_when_question_readme_hash_changes(tmp_path
         first_state["fingerprint"]["fingerprint_sha256"]
         != second_state["fingerprint"]["fingerprint_sha256"]
     )
+
+
+def test_analysis_uses_manifest_question_readme_metadata_for_job_prompt_and_fingerprint(
+    tmp_path, monkeypatch
+):
+    repo = copy_fixture_repo(tmp_path)
+    manifest = _run_analysis_prerequisites(repo)
+    manifest_readme_path = _manifest_entry(repo, COMPLETED_EXPERIMENT)["question_readme_path"]
+    manifest_readme_hash = _manifest_entry(repo, COMPLETED_EXPERIMENT)["question_readme_sha256"]
+    assert manifest_readme_path == "questions/q001-throughput/README.md"
+    assert manifest_readme_hash is not None
+    readme = repo / manifest_readme_path
+    readme.write_text(
+        readme.read_text(encoding="utf-8") + "\nMutated after normalize.\n",
+        encoding="utf-8",
+    )
+
+    def existing_manifest(_repo: Path, _config: dict[str, Any]) -> dict[str, Any]:
+        return manifest
+
+    monkeypatch.setattr("paperctl.inventory.load_manifest", existing_manifest)
+    backend = _valid_backend()
+
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+    state = read_json(repo / result.analysis_path)
+
+    job = backend.jobs[0]
+    assert job.question_readme_path == manifest_readme_path
+    assert job.question_readme_hash == manifest_readme_hash
+    assert manifest_readme_hash in job.prompt
+    assert state["fingerprint"]["extra_inputs"]["question_readme_sha256"] == manifest_readme_hash
+    assert state["fingerprint"]["source_files"] == [
+        {"path": manifest_readme_path, "sha256": manifest_readme_hash},
+        {
+            "path": (
+                "questions/q001-throughput/experiments/exp001-completed/"
+                "outputs/experiment_report.json"
+            ),
+            "sha256": "sha256:4bf7977e2379089b948891299acad85afb21056d02280f360549b1b4b7d86fdb",
+        },
+    ]
 
 
 def _job_context() -> dict:

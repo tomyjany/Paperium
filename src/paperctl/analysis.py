@@ -267,10 +267,7 @@ def _run_backend_analysis(
     question_path = manifest_entry["question_path"]
     inventory_path = manifest_entry["inventory_path"]
     evidence_path = manifest_entry["evidence_path"]
-    question_readme_path = _question_readme_path(repo, question_path)
-    question_readme_hash = (
-        sha256_file(repo / question_readme_path) if question_readme_path is not None else None
-    )
+    question_readme_path, question_readme_hash = _question_readme_metadata(repo, manifest_entry)
     prompt = build_analysis_prompt(
         {
             "question_path": question_path,
@@ -388,7 +385,7 @@ def _analysis_and_diagnostics_from_backend_result(
                 _diagnostic(
                     "schema_failure",
                     "Backend response does not match experiment-analysis.schema.json.",
-                    detail={"message": exc.message},
+                    detail=_schema_validation_detail(exc),
                 )
             ]
         claim_diagnostics = validate_analysis_claims(
@@ -435,8 +432,9 @@ def _parse_backend_response(raw_response: bytes | None) -> _ParseResult:
             None, _diagnostic("empty_output", "Analysis backend response body was empty.")
         )
     decoder = json.JSONDecoder()
+    start = _first_non_whitespace_index(text)
     try:
-        value, end = decoder.raw_decode(text)
+        value, end = decoder.raw_decode(text, start)
     except json.JSONDecodeError as exc:
         return _ParseResult(
             None,
@@ -463,6 +461,21 @@ def _parse_backend_response(raw_response: bytes | None) -> _ParseResult:
             ),
         )
     return _ParseResult(value, None)
+
+
+def _first_non_whitespace_index(text: str) -> int:
+    for index, char in enumerate(text):
+        if not char.isspace():
+            return index
+    return 0
+
+
+def _schema_validation_detail(exc: ValidationError) -> dict[str, Any]:
+    return {
+        "validator": str(exc.validator),
+        "path": list(exc.path),
+        "schema_path": list(exc.schema_path),
+    }
 
 
 def _build_analysis_state(
@@ -748,11 +761,19 @@ def _codex_capability_code(result: AnalysisBackendResult) -> str | None:
     return None
 
 
-def _question_readme_path(repo: Path, question_path: str) -> str | None:
+def _question_readme_metadata(
+    repo: Path, manifest_entry: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    if "question_readme_path" in manifest_entry or "question_readme_sha256" in manifest_entry:
+        return (
+            manifest_entry.get("question_readme_path"),
+            manifest_entry.get("question_readme_sha256"),
+        )
+    question_path = manifest_entry["question_path"]
     readme = repo / question_path / "README.md"
     if readme.is_file():
-        return f"{question_path}/README.md"
-    return None
+        return f"{question_path}/README.md", sha256_file(readme)
+    return None, None
 
 
 def _analysis_stage_config(config: dict[str, Any]) -> dict[str, Any]:
