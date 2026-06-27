@@ -119,6 +119,10 @@ failure or limitation.
 Worker prompts must repeat that question READMEs and experiment READMEs are context only, never
 factual authority. Numeric and factual authority comes from run artifacts.
 
+Context boundaries distinguish readable evidence paths from writable Paperium paths. Workers may
+read only allowed evidence paths. Workers may write only generated `.paperium` outputs assigned to
+that worker.
+
 ## Experiment Analysis Flow
 
 V1 supports selected experiments through manual paths and an interactive menu. Automatic
@@ -140,6 +144,13 @@ for fact-checking, it is recorded with disposition `artifact_missing` and status
 `needs_human_review`. V1 does not run normal analysis for that experiment and it cannot influence
 ranking or `PAPER.md` until the user supplies or approves relevant run artifacts. This is a hard
 failure for paper use, not for selection visibility.
+
+A usable run artifact is a non-empty artifact that can support factual claims about what happened
+in a run. In V1 this means at least one non-README file under `outputs/`, or an explicitly selected
+run-produced artifact such as metrics JSON/JSONL, CSV results, stdout/stderr logs, result summaries,
+telemetry, OCR outputs, or generated benchmark reports. Config files, source code, metadata files,
+and experiment/question READMEs are context. They may support claims about intended setup, but they
+do not by themselves make an experiment usable for paper findings.
 
 The interactive menu discovers likely experiment directories under `questions/**/experiments/*`
 first. It may also include explicitly configured experiment roots in a later version, but V1 does
@@ -196,10 +207,10 @@ Only fact-check-approved experiment notes can influence ranking or `PAPER.md`.
 
 ## Ranking And Question Focus
 
-After approved experiment notes exist, Claude proposes a ranking/inclusion artifact under the
-target repo root `.paperium/`.
+After approved experiment notes exist, Claude proposes ranking/inclusion artifacts under the target
+repo root `.paperium/`.
 
-The ranking artifact has a small required structure:
+The human-readable ranking artifact is `.paperium/ranking.md` and has a small required structure:
 
 - **include**: experiments that should influence the paper;
 - **exclude**: experiments that should not be used, with reasons;
@@ -207,6 +218,23 @@ The ranking artifact has a small required structure:
 
 Every selected fact-check-approved experiment must appear in exactly one of those buckets. V1 must
 not silently omit an approved experiment from the ranking artifact.
+
+V1 also writes `.paperium/ranking.json` as a small machine-checkable companion:
+
+```json
+{
+  "entries": [
+    {
+      "experiment_path": "questions/q001/experiments/exp001",
+      "bucket": "include|exclude|defer",
+      "reason": "short reason"
+    }
+  ]
+}
+```
+
+The JSON is used only to validate missing or duplicate approved experiments. The Markdown remains
+the user-facing artifact.
 
 V1 also writes `.paperium/dispositions.md` covering every selected experiment, including failed,
 skipped, artifact-missing, and human-review cases. Each selected experiment gets one visible
@@ -306,16 +334,22 @@ The state file is versioned. V1 uses this minimum shape:
       "stderr_path": ".paperium/workers/worker-id/stderr.txt",
       "output_path": ".paperium/workers/worker-id/output.md",
       "result_json_path": ".paperium/workers/worker-id/result.json",
-      "allowed_paths": [
+      "readable_paths": [
         "questions/q001/experiments/exp001",
         "questions/q001/README.md"
       ],
+      "writable_paths": [
+        ".paperium/workers/worker-id",
+        "questions/q001/experiments/exp001/.paperium"
+      ],
+      "canonical_result_path": "questions/q001/experiments/exp001/.paperium/fact-check.json",
       "approved_expansions": [],
       "failure_reason": null
     }
   ],
   "ranking": {
     "path": ".paperium/ranking.md",
+    "json_path": ".paperium/ranking.json",
     "approved": false
   },
   "dispositions_path": ".paperium/dispositions.md",
@@ -373,16 +407,17 @@ Each worker has:
 - role: `analyze`, `fact_check`, `rank`, `write`, or `review`;
 - prompt stdin supplied by `paperium`;
 - working directory set to the target repo root;
-- explicit allowed context listed in the prompt;
+- explicit readable evidence paths listed in the prompt;
+- explicit writable Paperium output paths listed in the prompt;
 - captured stdout and stderr under `.paperium/workers/<worker-id>/`;
 - timeout;
 - status recorded in `.paperium/state.json`.
 
 V1 records context boundaries for each worker. Boundary enforcement is prompt-and-audit based:
 the worker runs from the target repo root for practical CLI compatibility, but the prompt lists
-allowed paths and requires the worker to request expansion before relying on anything else.
-Approved expansions are recorded in worker state. Outputs that rely on unapproved paths fail
-review.
+readable paths and writable paths separately. The worker must request expansion before relying on
+anything outside readable paths, and must write only assigned Paperium outputs. Approved expansions
+are recorded in worker state. Outputs that rely on unapproved paths fail review.
 
 Context expansion protocol:
 
@@ -420,9 +455,16 @@ Fact-check and factual-review workers write a small structured result, not a lar
 }
 ```
 
-The JSON result is written to the worker `result_json_path`; any prose summary goes to
-`output_path`. Repair loops and approval gates use only this pass/fail status plus findings.
-Detailed evidence stays in run artifacts and generated analysis notes.
+`artifact_path: null` and `selector: null` are allowed only when the finding is that no supporting
+artifact exists or the claim is unsupported. If a finding says a claim is contradicted or corrected
+by a concrete artifact, it must include both `artifact_path` and `selector`.
+
+The JSON result is first written to the worker `result_json_path`; any prose summary goes to
+`output_path`. If the worker output is accepted, `paperium` copies that JSON to the canonical path:
+per-experiment fact-check results go to `<experiment>/.paperium/fact-check.json`, and section
+factual-review results go to `.paperium/sections/<section-id>.review.json`. State records both the
+worker result path and the canonical result path. Repair loops and approval gates use the canonical
+result paths. Detailed evidence stays in run artifacts and generated analysis notes.
 
 ## Error Handling
 
