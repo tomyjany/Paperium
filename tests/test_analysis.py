@@ -1170,7 +1170,7 @@ def test_accepted_analysis_freshness_is_stale_when_config_hash_changes(tmp_path)
     ("target", "replacement"),
     [
         ("paperctl.analysis.prompt_template_hash", lambda: "sha256:" + "1" * 64),
-        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 4),
+        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 5),
         ("paperctl.analysis.ANALYSIS_VALIDATION_VERSION", 3),
         ("paperctl.analysis.FORMULA_EVALUATOR_VERSION", 2),
         ("paperctl.analysis.load_schema", lambda name: {"patched": name}),
@@ -1202,7 +1202,7 @@ def test_accepted_analysis_freshness_is_stale_when_static_fingerprint_inputs_cha
     ("target", "replacement"),
     [
         ("paperctl.analysis.prompt_template_hash", lambda: "sha256:" + "1" * 64),
-        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 4),
+        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 5),
         ("paperctl.analysis.ANALYSIS_VALIDATION_VERSION", 3),
         ("paperctl.analysis.FORMULA_EVALUATOR_VERSION", 2),
     ],
@@ -1489,6 +1489,39 @@ def test_analysis_prompt_compacts_large_unclaimable_sections():
     assert '"previews": []' in prompt
     assert '"diagnostics": []' in prompt
     assert len(prompt) < 12000
+
+
+def test_analysis_prompt_limits_claimable_observed_values():
+    packet = _evidence_packet()
+    packet["observed_values"] = [
+        {
+            "value": index,
+            "value_type": "integer",
+            "unit": None,
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/exp001-completed/"
+                    f"outputs/metrics-{index}.json"
+                ),
+                "source_hash": "sha256:" + "c" * 64,
+                "selector_type": "json_pointer",
+                "selector": f"/values/{index}",
+                "adapter": "json",
+            },
+        }
+        for index in range(1000)
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert '"observed_values": [' in prompt
+    assert '"value": 0' in prompt
+    assert '"value": 299' in prompt
+    assert '"value": 300' not in prompt
+    assert '"observed_values": 1000' in prompt
+    assert '"observed_values": 300' in prompt
+    assert '"observed_values": 700' in prompt
+    assert len(prompt) < 180000
 
 
 def test_analysis_prompt_omits_absolute_paths_temp_paths_and_timestamps():

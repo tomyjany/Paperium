@@ -6,8 +6,10 @@ import re
 from typing import Any
 
 
-PROMPT_BUILDER_VERSION = 3
+PROMPT_BUILDER_VERSION = 4
 _MAX_PROMPT_CLAIM_STRING_CHARS = 512
+_MAX_PROMPT_CANONICAL_FACTS = 200
+_MAX_PROMPT_OBSERVED_VALUES = 300
 _MAX_PROMPT_AUX_ITEMS = 20
 _MAX_PROMPT_AUX_ITEM_JSON_CHARS = 1200
 _PROMPT_CLAIMABLE_ADAPTERS = {"json", "yaml"}
@@ -140,10 +142,14 @@ def _compact_evidence_packet_for_prompt(evidence_packet: dict[str, Any]) -> dict
     included_counts: dict[str, int] = {}
     original_counts: dict[str, int] = {}
 
+    claimable_limits = {
+        "canonical_facts": _MAX_PROMPT_CANONICAL_FACTS,
+        "observed_values": _MAX_PROMPT_OBSERVED_VALUES,
+    }
     for key in ("canonical_facts", "observed_values"):
         values = evidence_packet.get(key, [])
         original_counts[key] = len(values) if isinstance(values, list) else 0
-        compacted_values = _compact_claimable_values(values)
+        compacted_values = _compact_claimable_values(values, limit=claimable_limits[key])
         compacted[key] = compacted_values
         included_counts[key] = len(compacted_values)
         omitted_counts[key] = original_counts[key] - included_counts[key]
@@ -179,15 +185,16 @@ def _compact_evidence_packet_for_prompt(evidence_packet: dict[str, Any]) -> dict
     return compacted
 
 
-def _compact_claimable_values(values: Any) -> list[dict[str, Any]]:
+def _compact_claimable_values(values: Any, *, limit: int) -> list[dict[str, Any]]:
     if not isinstance(values, list):
         return []
-    compacted: list[dict[str, Any]] = []
-    for item in values:
+    candidates: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
+    for index, item in enumerate(values):
         if not isinstance(item, dict) or not _is_prompt_claimable_value(item):
             continue
-        compacted.append(_compact_claimable_value(item))
-    return compacted
+        candidates.append((_prompt_claimable_rank(item, index), _compact_claimable_value(item)))
+    candidates.sort(key=lambda pair: pair[0])
+    return [item for _rank, item in candidates[:limit]]
 
 
 def _is_prompt_claimable_value(item: dict[str, Any]) -> bool:
@@ -220,6 +227,28 @@ def _compact_claimable_value(item: dict[str, Any]) -> dict[str, Any]:
             if key in source
         }
     return compacted
+
+
+def _prompt_claimable_rank(item: dict[str, Any], index: int) -> tuple[int, int, int]:
+    source = item.get("source")
+    path = source.get("path", "") if isinstance(source, dict) else ""
+    value_type = item.get("value_type")
+    if "/outputs/" in path:
+        path_rank = 0
+    elif path.endswith("metadata.json"):
+        path_rank = 1
+    elif "/.venv/" in path or "site-packages/" in path:
+        path_rank = 3
+    else:
+        path_rank = 2
+    type_rank = {
+        "number": 0,
+        "integer": 0,
+        "boolean": 1,
+        "null": 2,
+        "string": 3,
+    }.get(str(value_type), 4)
+    return (path_rank, type_rank, index)
 
 
 def _compact_auxiliary_items(values: Any) -> list[Any]:
