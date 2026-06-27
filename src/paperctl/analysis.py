@@ -49,6 +49,31 @@ class AnalyzeResult:
     diagnostic_codes: list[str]
 
 
+@dataclass(frozen=True)
+class AnalysisPreflightResult:
+    experiment_path: str
+    analysis_path: str | None
+    runnable: bool
+    diagnostic_codes: list[str]
+    config: dict[str, Any] | None
+    manifest_path: str | None
+    manifest_entry: dict[str, Any] | None
+    inventory: dict[str, Any] | None
+    evidence_packet: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class AcceptedAnalysisFreshness:
+    experiment_path: str
+    analysis_path: str | None
+    fresh: bool
+    diagnostic_codes: list[str]
+
+    @property
+    def diagnostic_code(self) -> str | None:
+        return self.diagnostic_codes[0] if self.diagnostic_codes else None
+
+
 class _PathResult(NamedTuple):
     path: str | None
     diagnostic_code: str | None
@@ -81,59 +106,34 @@ def analyze_experiment(
 ) -> AnalyzeResult:
     if timeout_seconds_override is not None and timeout_seconds_override <= 0:
         raise AnalysisError("timeout_seconds_override must be positive")
-    repo = repo.resolve()
-    config = config_module.load_config(repo)
-    manifest_path = f"{config['paper']['work_directory']}/manifest.json"
 
-    manifest_result = _load_manifest(repo, config)
-    if isinstance(manifest_result, str):
-        return _preflight_failed(experiment, manifest_result)
-    manifest = manifest_result
-
-    entry_result = _resolve_manifest_entry(manifest, experiment)
-    if isinstance(entry_result, str):
-        return _preflight_failed(experiment, entry_result)
-    manifest_entry = entry_result
-
-    inventory_result = _load_inventory(repo, config, manifest_entry, manifest_path)
-    if isinstance(inventory_result, str):
-        return _preflight_failed(experiment, inventory_result)
-    inventory = inventory_result
-
-    evidence_result = _load_evidence(repo, manifest_entry)
-    if isinstance(evidence_result, str):
-        return _preflight_failed(experiment, evidence_result)
-    evidence_packet = evidence_result
-
-    freshness_code = _evidence_freshness_diagnostic(
-        repo, config, manifest_entry, inventory, manifest_path, evidence_packet
-    )
-    if freshness_code is not None:
-        return _preflight_failed(experiment, freshness_code)
-
-    disposition_code = _disposition_diagnostic(evidence_packet)
-    if disposition_code is not None:
-        return _preflight_failed(experiment, disposition_code)
-
-    if not _has_claimable_structured_evidence(evidence_packet):
-        return _preflight_failed(experiment, "no_claimable_structured_evidence")
-
-    analysis_path_result = _analysis_output_path(repo, config, experiment)
-    if analysis_path_result.diagnostic_code is not None:
-        return _preflight_failed(experiment, analysis_path_result.diagnostic_code)
-    analysis_path = analysis_path_result.path
-    if analysis_path is None:
-        raise AnalysisError("analysis output path resolution returned no path or diagnostic")
+    preflight = preflight_experiment(repo, experiment)
+    if not preflight.runnable:
+        return AnalyzeResult(
+            experiment_path=experiment,
+            analysis_path=None,
+            status="preflight_failed",
+            diagnostic_codes=preflight.diagnostic_codes,
+        )
+    if (
+        preflight.config is None
+        or preflight.manifest_path is None
+        or preflight.manifest_entry is None
+        or preflight.inventory is None
+        or preflight.evidence_packet is None
+        or preflight.analysis_path is None
+    ):
+        raise AnalysisError("runnable analysis preflight returned incomplete inputs")
 
     if backend is not None:
         return _run_backend_analysis(
-            repo=repo,
-            config=config,
-            manifest_path=manifest_path,
-            manifest_entry=manifest_entry,
-            inventory=inventory,
-            evidence_packet=evidence_packet,
-            analysis_path=analysis_path,
+            repo=repo.resolve(),
+            config=preflight.config,
+            manifest_path=preflight.manifest_path,
+            manifest_entry=preflight.manifest_entry,
+            inventory=preflight.inventory,
+            evidence_packet=preflight.evidence_packet,
+            analysis_path=preflight.analysis_path,
             backend=backend,
             backend_options_override=backend_options_override,
             timeout_seconds_override=timeout_seconds_override,
@@ -141,19 +141,386 @@ def analyze_experiment(
 
     return AnalyzeResult(
         experiment_path=experiment,
-        analysis_path=analysis_path,
+        analysis_path=preflight.analysis_path,
         status="failed",
         diagnostic_codes=["analysis_not_run"],
     )
 
 
-def _preflight_failed(experiment: str, diagnostic_code: str) -> AnalyzeResult:
-    return AnalyzeResult(
+def preflight_experiment(repo: Path, experiment: str) -> AnalysisPreflightResult:
+    repo = repo.resolve()
+    config = config_module.load_config(repo)
+    manifest_path = f"{config['paper']['work_directory']}/manifest.json"
+
+    manifest_result = _load_manifest(repo, config)
+    if isinstance(manifest_result, str):
+        return _preflight_result(
+            experiment,
+            manifest_result,
+            config=config,
+            manifest_path=manifest_path,
+        )
+    manifest = manifest_result
+
+    entry_result = _resolve_manifest_entry(manifest, experiment)
+    if isinstance(entry_result, str):
+        return _preflight_result(
+            experiment,
+            entry_result,
+            config=config,
+            manifest_path=manifest_path,
+        )
+    manifest_entry = entry_result
+
+    inventory_result = _load_inventory(repo, config, manifest_entry, manifest_path)
+    if isinstance(inventory_result, str):
+        return _preflight_result(
+            experiment,
+            inventory_result,
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+        )
+    inventory = inventory_result
+
+    evidence_result = _load_evidence(repo, manifest_entry)
+    if isinstance(evidence_result, str):
+        return _preflight_result(
+            experiment,
+            evidence_result,
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+            inventory=inventory,
+        )
+    evidence_packet = evidence_result
+
+    freshness_code = _evidence_freshness_diagnostic(
+        repo, config, manifest_entry, inventory, manifest_path, evidence_packet
+    )
+    if freshness_code is not None:
+        return _preflight_result(
+            experiment,
+            freshness_code,
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+            inventory=inventory,
+            evidence_packet=evidence_packet,
+        )
+
+    disposition_code = _disposition_diagnostic(evidence_packet)
+    if disposition_code is not None:
+        return _preflight_result(
+            experiment,
+            disposition_code,
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+            inventory=inventory,
+            evidence_packet=evidence_packet,
+        )
+
+    if not _has_claimable_structured_evidence(evidence_packet):
+        return _preflight_result(
+            experiment,
+            "no_claimable_structured_evidence",
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+            inventory=inventory,
+            evidence_packet=evidence_packet,
+        )
+
+    analysis_path_result = _analysis_output_path(repo, config, experiment)
+    if analysis_path_result.diagnostic_code is not None:
+        return _preflight_result(
+            experiment,
+            analysis_path_result.diagnostic_code,
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+            inventory=inventory,
+            evidence_packet=evidence_packet,
+        )
+    analysis_path = analysis_path_result.path
+    if analysis_path is None:
+        raise AnalysisError("analysis output path resolution returned no path or diagnostic")
+
+    return AnalysisPreflightResult(
+        experiment_path=experiment,
+        analysis_path=analysis_path,
+        runnable=True,
+        diagnostic_codes=[],
+        config=config,
+        manifest_path=manifest_path,
+        manifest_entry=manifest_entry,
+        inventory=inventory,
+        evidence_packet=evidence_packet,
+    )
+
+
+def accepted_analysis_is_fresh(
+    repo: Path,
+    experiment: str,
+    *,
+    backend_name: str,
+    backend_options_override: dict[str, Any] | None,
+    timeout_seconds_override: int | None,
+) -> AcceptedAnalysisFreshness:
+    if timeout_seconds_override is not None and timeout_seconds_override <= 0:
+        raise AnalysisError("timeout_seconds_override must be positive")
+
+    repo = repo.resolve()
+    preflight = preflight_experiment(repo, experiment)
+    analysis_path = _freshness_analysis_path(repo, experiment, preflight)
+    if analysis_path is None:
+        return AcceptedAnalysisFreshness(
+            experiment_path=experiment,
+            analysis_path=None,
+            fresh=False,
+            diagnostic_codes=preflight.diagnostic_codes or ["unsafe_analysis_path"],
+        )
+
+    state_result = _load_existing_analysis_state(repo, analysis_path)
+    if isinstance(state_result, str):
+        return AcceptedAnalysisFreshness(
+            experiment_path=experiment,
+            analysis_path=analysis_path,
+            fresh=False,
+            diagnostic_codes=[state_result],
+        )
+    state = state_result
+
+    if state.get("status") != "accepted":
+        return AcceptedAnalysisFreshness(
+            experiment_path=experiment,
+            analysis_path=analysis_path,
+            fresh=False,
+            diagnostic_codes=["analysis_not_accepted"],
+        )
+
+    if not preflight.runnable:
+        return AcceptedAnalysisFreshness(
+            experiment_path=experiment,
+            analysis_path=analysis_path,
+            fresh=False,
+            diagnostic_codes=preflight.diagnostic_codes,
+        )
+    if (
+        preflight.config is None
+        or preflight.manifest_path is None
+        or preflight.manifest_entry is None
+        or preflight.inventory is None
+        or preflight.evidence_packet is None
+    ):
+        raise AnalysisError("runnable analysis preflight returned incomplete inputs")
+
+    fresh = _accepted_analysis_inputs_are_fresh(
+        repo=repo,
+        state=state,
+        config=preflight.config,
+        manifest_path=preflight.manifest_path,
+        manifest_entry=preflight.manifest_entry,
+        backend_name=backend_name,
+        backend_options_override=backend_options_override,
+        timeout_seconds_override=timeout_seconds_override,
+    )
+    return AcceptedAnalysisFreshness(
+        experiment_path=experiment,
+        analysis_path=analysis_path,
+        fresh=fresh,
+        diagnostic_codes=[] if fresh else ["stale_analysis_inputs"],
+    )
+
+
+def _preflight_result(
+    experiment: str,
+    diagnostic_code: str,
+    *,
+    config: dict[str, Any] | None = None,
+    manifest_path: str | None = None,
+    manifest_entry: dict[str, Any] | None = None,
+    inventory: dict[str, Any] | None = None,
+    evidence_packet: dict[str, Any] | None = None,
+) -> AnalysisPreflightResult:
+    return AnalysisPreflightResult(
         experiment_path=experiment,
         analysis_path=None,
-        status="preflight_failed",
+        runnable=False,
         diagnostic_codes=[diagnostic_code],
+        config=config,
+        manifest_path=manifest_path,
+        manifest_entry=manifest_entry,
+        inventory=inventory,
+        evidence_packet=evidence_packet,
     )
+
+
+def _freshness_analysis_path(
+    repo: Path, experiment: str, preflight: AnalysisPreflightResult
+) -> str | None:
+    if preflight.analysis_path is not None:
+        return preflight.analysis_path
+    if preflight.config is None:
+        return None
+    result = _analysis_output_path(repo, preflight.config, experiment)
+    if result.diagnostic_code is not None:
+        return None
+    return result.path
+
+
+def _load_existing_analysis_state(repo: Path, analysis_path: str) -> dict[str, Any] | str:
+    try:
+        with (repo / analysis_path).open(encoding="utf-8") as handle:
+            state = json.load(handle)
+    except FileNotFoundError:
+        return "missing_analysis_state"
+    except (OSError, json.JSONDecodeError):
+        return "malformed_analysis_state"
+
+    try:
+        validate_artifact("analysis-state.schema.json", state)
+        validate_analysis_state_integrity(state)
+    except (ValidationError, ValueError):
+        return "malformed_analysis_state"
+    return state
+
+
+def _accepted_analysis_inputs_are_fresh(
+    *,
+    repo: Path,
+    state: dict[str, Any],
+    config: dict[str, Any],
+    manifest_path: str,
+    manifest_entry: dict[str, Any],
+    backend_name: str,
+    backend_options_override: dict[str, Any] | None,
+    timeout_seconds_override: int | None,
+) -> bool:
+    fingerprint = state.get("fingerprint")
+    if not isinstance(fingerprint, dict):
+        return False
+
+    if fingerprint.get("stage") != {"name": "analyze", "version": 1}:
+        return False
+    if fingerprint.get("schema_version") != 1:
+        return False
+    if fingerprint.get("config_sha256") != _analysis_config_sha256(config):
+        return False
+    if fingerprint.get("source_files") != _current_source_files(repo, fingerprint):
+        return False
+    if fingerprint.get("prerequisite_artifacts") != _current_analysis_prerequisites(
+        repo, manifest_path, manifest_entry
+    ):
+        return False
+
+    expected_extra = _expected_stable_analysis_extra_inputs(
+        config=config,
+        manifest_entry=manifest_entry,
+        repo=repo,
+        backend_name=backend_name,
+        backend_options_override=backend_options_override,
+        timeout_seconds_override=timeout_seconds_override,
+    )
+    return _stable_extra_inputs_match(fingerprint.get("extra_inputs"), expected_extra)
+
+
+def _analysis_config_sha256(config: dict[str, Any]) -> str:
+    return canonical_json_hash(
+        {
+            "paper": {"work_directory": config["paper"]["work_directory"]},
+            "analysis": _analysis_stage_config(config),
+        }
+    )
+
+
+def _current_source_files(repo: Path, fingerprint: dict[str, Any]) -> list[dict[str, str]]:
+    source_files = fingerprint.get("source_files")
+    if not isinstance(source_files, list):
+        return []
+    current: list[dict[str, str]] = []
+    for source in source_files:
+        if not isinstance(source, dict):
+            return []
+        path = source.get("path")
+        if not isinstance(path, str):
+            return []
+        try:
+            current.append({"path": path, "sha256": sha256_file(repo / path)})
+        except OSError:
+            return []
+    return sorted(current, key=lambda source: source["path"])
+
+
+def _current_analysis_prerequisites(
+    repo: Path, manifest_path: str, manifest_entry: dict[str, Any]
+) -> list[dict[str, str]]:
+    prerequisites = [
+        {
+            "path": manifest_path,
+            "schema_name": "manifest.schema.json",
+            "sha256": sha256_file(repo / manifest_path),
+        },
+        {
+            "path": manifest_entry["inventory_path"],
+            "schema_name": "artifact-inventory.schema.json",
+            "sha256": sha256_file(repo / manifest_entry["inventory_path"]),
+        },
+        {
+            "path": manifest_entry["evidence_path"],
+            "schema_name": "evidence-packet.schema.json",
+            "sha256": sha256_file(repo / manifest_entry["evidence_path"]),
+        },
+    ]
+    return sorted(prerequisites, key=lambda prerequisite: prerequisite["path"])
+
+
+def _expected_stable_analysis_extra_inputs(
+    *,
+    config: dict[str, Any],
+    manifest_entry: dict[str, Any],
+    repo: Path,
+    backend_name: str,
+    backend_options_override: dict[str, Any] | None,
+    timeout_seconds_override: int | None,
+) -> dict[str, Any]:
+    _question_readme_path, question_readme_hash = _question_readme_metadata(repo, manifest_entry)
+    return {
+        "analysis_state_schema_sha256": canonical_json_hash(
+            load_schema("analysis-state.schema.json")
+        ),
+        "experiment_analysis_schema_sha256": canonical_json_hash(
+            load_schema("experiment-analysis.schema.json")
+        ),
+        "prompt_template_sha256": prompt_template_hash(),
+        "prompt_builder_version": PROMPT_BUILDER_VERSION,
+        "claim_validator_version": ANALYSIS_VALIDATION_VERSION,
+        "formula_evaluator_version": FORMULA_EVALUATOR_VERSION,
+        "question_readme_sha256": question_readme_hash,
+        "backend": {
+            "name": backend_name,
+            "options": _effective_backend_options(config, backend_options_override),
+            "timeout_seconds": _effective_timeout_seconds(config, timeout_seconds_override),
+        },
+    }
+
+
+def _stable_extra_inputs_match(existing: Any, expected: dict[str, Any]) -> bool:
+    if not isinstance(existing, dict):
+        return False
+    for key, expected_value in expected.items():
+        if key == "backend":
+            backend = existing.get("backend")
+            if not isinstance(backend, dict):
+                return False
+            for backend_key, backend_value in expected_value.items():
+                if backend.get(backend_key) != backend_value:
+                    return False
+            continue
+        if existing.get(key) != expected_value:
+            return False
+    return True
 
 
 def _load_manifest(repo: Path, config: dict) -> dict | str:

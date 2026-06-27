@@ -3,8 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
+
+
+_TOKEN_KEYS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
 
 
 def print_build_rich(result: Any) -> None:
@@ -70,6 +80,70 @@ def print_audit_rich(result: Any) -> None:
     console.print(statuses)
 
 
+def print_analyze_plain(result: Any) -> None:
+    for index, item in enumerate(result.items):
+        if index:
+            print()
+        print(f"experiment: {item.experiment_path}")
+        print(f"status: {item.status.value}")
+        print(f"analysis: {item.analysis_path or 'none'}")
+        print(f"diagnostics: {_diagnostic_summary(item.diagnostic_codes)}")
+        if item.token_usage:
+            print(f"tokens: {_token_summary(item.token_usage)}")
+    print()
+    print(f"counts: {_count_summary(result.counts)}")
+    if _has_tokens(result.token_totals):
+        print(f"token totals: {_token_summary(result.token_totals)}")
+
+
+def print_analyze_rich(result: Any) -> None:
+    console = Console()
+    console.print(Panel.fit("Batch experiment analysis", title="paperctl analyze"))
+    for item in result.items:
+        console.print(f"experiment: {item.experiment_path}")
+    console.print(_analyze_table(result.items, title="Batch Analysis"))
+
+    counts = Table(title="Counts", show_header=False)
+    counts.add_column("Status")
+    counts.add_column("Count")
+    for key in ("selected", "skipped", "accepted", "failed", "blocked", "not_started"):
+        counts.add_row(key, str(result.counts.get(key, 0)))
+    console.print(counts)
+
+    if _has_tokens(result.token_totals):
+        tokens = Table(title="Token Totals", show_header=False)
+        tokens.add_column("Token")
+        tokens.add_column("Count")
+        for key in _TOKEN_KEYS:
+            if key in result.token_totals:
+                tokens.add_row(key, str(result.token_totals[key]))
+        console.print(tokens)
+
+
+class RichAnalyzeProgressReporter:
+    def __init__(self) -> None:
+        self._console = Console()
+        self._items: dict[str, Any] = {}
+        self._live = Live(
+            self._progress_table(),
+            console=self._console,
+            refresh_per_second=8,
+            transient=False,
+        )
+        self._live.start()
+
+    def on_update(self, item: Any) -> None:
+        self._items[item.experiment_path] = item
+        self._live.update(self._progress_table(), refresh=True)
+        self._console.print(f"{item.status.value}: {item.experiment_path}")
+
+    def close(self) -> None:
+        self._live.stop()
+
+    def _progress_table(self) -> Table:
+        return _analyze_table(self._items.values(), title="Analyze Progress")
+
+
 def _counts(result: Any) -> str:
     return f"{result.created} created, {result.replaced} replaced, {result.unchanged} unchanged"
 
@@ -81,10 +155,51 @@ def _publication_summary(blocker_codes: list[str]) -> str:
 
 
 def _styled_status(status: str) -> str:
-    if status in {"passed", "complete", "created", "wrote"}:
+    if status in {"passed", "complete", "created", "wrote", "accepted"}:
         return f"[green]{status}[/green]"
-    if status in {"blocked", "failed"}:
+    if status in {"blocked", "failed", "not_started"}:
         return f"[red]{status}[/red]"
-    if status in {"unchanged"}:
+    if status in {"unchanged", "skipped"}:
         return f"[blue]{status}[/blue]"
+    if status in {"queued", "running"}:
+        return f"[yellow]{status}[/yellow]"
     return status
+
+
+def _analyze_table(items: Any, *, title: str) -> Table:
+    table = Table(title=title, show_lines=False)
+    table.add_column("Experiment", overflow="fold")
+    table.add_column("Status")
+    table.add_column("Analysis")
+    table.add_column("Diagnostics")
+    table.add_column("Tokens")
+    for item in items:
+        table.add_row(
+            item.experiment_path,
+            _styled_status(item.status.value),
+            item.analysis_path or "none",
+            _diagnostic_summary(item.diagnostic_codes),
+            _token_summary(item.token_usage) if item.token_usage else "",
+        )
+    return table
+
+
+def _diagnostic_summary(codes: list[str]) -> str:
+    if not codes:
+        return "none"
+    return ", ".join(codes)
+
+
+def _count_summary(counts: dict[str, int]) -> str:
+    return " ".join(
+        f"{key}={counts.get(key, 0)}"
+        for key in ("selected", "skipped", "accepted", "failed", "blocked", "not_started")
+    )
+
+
+def _token_summary(tokens: dict[str, int]) -> str:
+    return " ".join(f"{key}={tokens[key]}" for key in _TOKEN_KEYS if key in tokens)
+
+
+def _has_tokens(tokens: dict[str, int]) -> bool:
+    return any(tokens.get(key, 0) > 0 for key in _TOKEN_KEYS)

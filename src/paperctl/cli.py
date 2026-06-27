@@ -2,15 +2,23 @@ import argparse
 from pathlib import Path
 import sys
 
-from paperctl.analysis import AnalysisError, analyze_experiment
+from paperctl.analysis import AnalysisError
+from paperctl.analysis_batch import analyze_experiments
 from paperctl.analysis_backends import CodexExecBackend, FakeBackend
+from paperctl.analysis_menu import ExperimentMenuError, choose_experiments_interactively
 from paperctl.audit import AuditError, audit
 from paperctl.build import BuildError, build
 from paperctl.config import ConfigError, RepoResolutionError, init_repo, load_config, resolve_repo
 from paperctl.discovery import DiscoveryError, discover
 from paperctl.inventory import InventoryError, inventory_all, load_manifest
 from paperctl.normalize import NormalizeError, normalize_all
-from paperctl.output import print_audit_rich, print_build_rich
+from paperctl.output import (
+    RichAnalyzeProgressReporter,
+    print_analyze_plain,
+    print_analyze_rich,
+    print_audit_rich,
+    print_build_rich,
+)
 from paperctl.rendering import RenderError, render
 
 
@@ -35,17 +43,29 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--force", action="store_true")
     audit.add_argument("--plain", action="store_true", default=argparse.SUPPRESS)
     analyze = subparsers.add_parser("analyze")
-    analyze.add_argument("experiment", nargs="?")
+    analyze.add_argument("experiments", nargs="*")
+    analyze.add_argument("--experiments-menu", action="store_true")
     analyze.add_argument("--backend", default="codex-exec")
     analyze.add_argument("--fake-response")
     analyze.add_argument("--timeout-seconds", type=int)
+    analyze.add_argument("--jobs", type=int, default=2)
+    analyze.add_argument("--force", action="store_true")
     analyze.add_argument("--plain", action="store_true", default=argparse.SUPPRESS)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        if args.command == "analyze" and all(not item.startswith("-") for item in unknown):
+            args.experiments.extend(unknown)
+        else:
+            print(
+                f"{parser.prog}: unrecognized arguments: {' '.join(unknown)}",
+                file=sys.stderr,
+            )
+            return INVALID_INVOCATION
     if args.command is None:
         parser.print_help()
         return SUCCESS
@@ -165,24 +185,56 @@ def main(argv: list[str] | None = None) -> int:
         if invalid is not None:
             print(f"{parser.prog}: {invalid}", file=sys.stderr)
             return INVALID_INVOCATION
+        if args.experiments_menu:
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                print(
+                    f"{parser.prog}: --experiments-menu requires an interactive terminal",
+                    file=sys.stderr,
+                )
+                return INVALID_INVOCATION
+            try:
+                config = load_config(repo)
+                args.experiments = choose_experiments_interactively(repo, config)
+                if not args.experiments:
+                    raise ExperimentMenuError("no experiments selected")
+            except ExperimentMenuError as exc:
+                print(f"{parser.prog}: {exc}", file=sys.stderr)
+                return INVALID_INVOCATION
+            except InventoryError as exc:
+                print(f"{parser.prog}: {exc}", file=sys.stderr)
+                return DETERMINISTIC_FAILURE
+            except ConfigError as exc:
+                print(f"{parser.prog}: {exc}", file=sys.stderr)
+                return DETERMINISTIC_FAILURE
         backend = _analysis_backend(args.backend)
         backend_options_override = _analysis_backend_options_override(args)
+        use_rich = _use_rich(args)
+        progress = RichAnalyzeProgressReporter() if use_rich else None
         try:
-            result = analyze_experiment(
+            result = analyze_experiments(
                 repo,
-                args.experiment,
+                args.experiments,
                 backend=backend,
                 backend_options_override=backend_options_override,
                 timeout_seconds_override=args.timeout_seconds,
+                jobs=args.jobs,
+                force=args.force,
+                on_update=progress.on_update if progress is not None else None,
             )
         except (ConfigError, AnalysisError) as exc:
             print(f"{parser.prog}: {exc}", file=sys.stderr)
             return DETERMINISTIC_FAILURE
-        print(f"experiment: {result.experiment_path}")
-        print(f"status: {result.status}")
-        print(f"analysis: {result.analysis_path or 'none'}")
-        print(f"diagnostics: {_diagnostic_summary(result.diagnostic_codes)}")
-        return SUCCESS if result.status == "accepted" else DETERMINISTIC_FAILURE
+        except ValueError as exc:
+            print(f"{parser.prog}: {exc}", file=sys.stderr)
+            return INVALID_INVOCATION
+        finally:
+            if progress is not None:
+                progress.close()
+        if use_rich:
+            print_analyze_rich(result)
+        else:
+            print_analyze_plain(result)
+        return SUCCESS if result.exit_success else DETERMINISTIC_FAILURE
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION
 
@@ -210,8 +262,12 @@ def _audit_exit_code(prog: str, result) -> int:
 
 
 def _validate_analyze_args(args: argparse.Namespace) -> str | None:
-    if args.experiment is None:
-        return "the following arguments are required: experiment"
+    if args.experiments_menu and args.experiments:
+        return "--experiments-menu cannot be used with explicit experiments"
+    if not args.experiments and not args.experiments_menu:
+        return "the following arguments are required: experiments or --experiments-menu"
+    if args.jobs <= 0:
+        return "--jobs must be a positive integer"
     if args.backend not in {"codex-exec", "fake"}:
         return (
             f"argument --backend: invalid choice: {args.backend!r} "
@@ -236,9 +292,3 @@ def _analysis_backend_options_override(args: argparse.Namespace) -> dict[str, st
     if args.fake_response is None:
         return {}
     return {"fake_response_path": args.fake_response}
-
-
-def _diagnostic_summary(codes: list[str]) -> str:
-    if not codes:
-        return "none"
-    return ", ".join(codes)

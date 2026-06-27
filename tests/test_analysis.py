@@ -7,7 +7,12 @@ import pytest
 import yaml
 
 from conftest import copy_fixture_repo, read_json, run_paperctl
-from paperctl.analysis import AnalysisError, analyze_experiment
+from paperctl.analysis import (
+    AnalysisError,
+    accepted_analysis_is_fresh,
+    analyze_experiment,
+    preflight_experiment,
+)
 from paperctl.analysis_backends import AnalysisBackendResult
 from paperctl.analysis_validation import AnalysisDiagnostic
 from paperctl.analysis_prompt import (
@@ -352,6 +357,52 @@ def test_analysis_preflight_non_candidate_disposition_fails_before_backend_and_p
         repo,
         diagnostic_code="non_candidate_experiment",
     )
+
+
+def test_public_preflight_candidate_reports_analysis_path_and_loaded_inputs(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+
+    result = preflight_experiment(repo, COMPLETED_EXPERIMENT)
+
+    assert result.experiment_path == COMPLETED_EXPERIMENT
+    assert result.analysis_path == (
+        "paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
+    )
+    assert result.runnable is True
+    assert result.diagnostic_codes == []
+    assert result.config["paper"]["work_directory"] == "paper/work"
+    assert result.manifest_path == "paper/work/manifest.json"
+    assert result.manifest_entry["experiment_path"] == COMPLETED_EXPERIMENT
+    assert result.inventory["experiment_path"] == COMPLETED_EXPERIMENT
+    assert result.evidence_packet["experiment_path"] == COMPLETED_EXPERIMENT
+    assert not (repo / result.analysis_path).exists()
+
+
+def test_public_preflight_blocked_reports_diagnostic_without_analysis_path(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    blocked = repo / "questions/q001-throughput/experiments/exp999-empty"
+    blocked.mkdir()
+    _run_analysis_prerequisites(repo)
+
+    result = preflight_experiment(
+        repo,
+        "questions/q001-throughput/experiments/exp999-empty",
+    )
+
+    assert result.experiment_path == "questions/q001-throughput/experiments/exp999-empty"
+    assert result.analysis_path is None
+    assert result.runnable is False
+    assert result.diagnostic_codes == ["blocked_experiment"]
+    assert result.config["paper"]["work_directory"] == "paper/work"
+    assert result.manifest_path == "paper/work/manifest.json"
+    assert result.manifest_entry["experiment_path"] == (
+        "questions/q001-throughput/experiments/exp999-empty"
+    )
+    assert result.inventory["experiment_path"] == (
+        "questions/q001-throughput/experiments/exp999-empty"
+    )
+    assert result.evidence_packet["preanalysis_disposition"] == "blocked"
 
 
 def test_analysis_preflight_unsafe_analysis_path_rejects_symlink_parent_before_backend(
@@ -957,6 +1008,173 @@ def test_analysis_custom_work_directory_state_path_validates(tmp_path):
         "custom-paper/work/analyses/questions/q001-throughput/experiments/exp001-completed.json"
     )
     _assert_valid_analysis_state(state)
+
+
+def test_accepted_analysis_freshness_accepts_current_inputs_and_backend_options(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    backend = _valid_backend()
+
+    accepted = analyze_experiment(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend=backend,
+        backend_options_override={"fake_response_path": "response.json", "trace": "yes"},
+        timeout_seconds_override=17,
+    )
+
+    freshness = accepted_analysis_is_fresh(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend_name="fake",
+        backend_options_override={"fake_response_path": "response.json", "trace": "yes"},
+        timeout_seconds_override=17,
+    )
+
+    assert accepted.status == "accepted"
+    assert freshness.experiment_path == COMPLETED_EXPERIMENT
+    assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.fresh is True
+    assert freshness.diagnostic_codes == []
+
+
+def test_accepted_analysis_freshness_is_stale_when_evidence_packet_changes(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    accepted, _state = _analyze_with_backend(repo, backend)
+    entry = _manifest_entry(repo, COMPLETED_EXPERIMENT)
+    packet = read_json(repo / entry["evidence_path"])
+    packet["canonical_facts"][0]["value"] = 999
+    _write_json(repo / entry["evidence_path"], packet)
+
+    freshness = accepted_analysis_is_fresh(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend_name="fake",
+        backend_options_override=None,
+        timeout_seconds_override=None,
+    )
+
+    assert accepted.status == "accepted"
+    assert freshness.fresh is False
+    assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.diagnostic_code == "stale_evidence"
+    assert freshness.diagnostic_codes == ["stale_evidence"]
+
+
+def test_accepted_analysis_freshness_is_stale_when_source_change_stales_inventory(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    accepted, _state = _analyze_with_backend(repo, backend)
+    source = repo / COMPLETED_EXPERIMENT / "outputs/experiment_report.json"
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["canonical_facts"][0]["value"] = 99.5
+    _write_json(source, payload)
+
+    freshness = accepted_analysis_is_fresh(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend_name="fake",
+        backend_options_override=None,
+        timeout_seconds_override=None,
+    )
+
+    assert accepted.status == "accepted"
+    assert freshness.fresh is False
+    assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.diagnostic_codes == ["stale_inventory"]
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "freshness_kwargs"),
+    [
+        ("backend_name", {"backend_name": "codex-exec"}),
+        ("backend_options", {"backend_options_override": {"trace": "changed"}}),
+        ("timeout", {"timeout_seconds_override": 19}),
+    ],
+)
+def test_accepted_analysis_freshness_is_stale_when_backend_inputs_change(
+    tmp_path, changed_field, freshness_kwargs
+):
+    repo = copy_fixture_repo(tmp_path)
+    _run_analysis_prerequisites(repo)
+    backend = _valid_backend()
+    accepted = analyze_experiment(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend=backend,
+        backend_options_override={"trace": "original"},
+        timeout_seconds_override=17,
+    )
+    kwargs = {
+        "backend_name": "fake",
+        "backend_options_override": {"trace": "original"},
+        "timeout_seconds_override": 17,
+    }
+    kwargs.update(freshness_kwargs)
+
+    freshness = accepted_analysis_is_fresh(repo, COMPLETED_EXPERIMENT, **kwargs)
+
+    assert changed_field
+    assert accepted.status == "accepted"
+    assert freshness.fresh is False
+    assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.diagnostic_codes == ["stale_analysis_inputs"]
+
+
+def test_accepted_analysis_freshness_is_stale_when_config_hash_changes(tmp_path):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    accepted, _state = _analyze_with_backend(repo, backend)
+    config_path = repo / "paper.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["analysis"] = {"timeout_seconds": 44}
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    freshness = accepted_analysis_is_fresh(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend_name="fake",
+        backend_options_override=None,
+        timeout_seconds_override=None,
+    )
+
+    assert accepted.status == "accepted"
+    assert freshness.fresh is False
+    assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.diagnostic_codes == ["stale_analysis_inputs"]
+
+
+@pytest.mark.parametrize(
+    ("target", "replacement"),
+    [
+        ("paperctl.analysis.prompt_template_hash", lambda: "sha256:" + "1" * 64),
+        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 3),
+        ("paperctl.analysis.ANALYSIS_VALIDATION_VERSION", 3),
+        ("paperctl.analysis.FORMULA_EVALUATOR_VERSION", 2),
+        ("paperctl.analysis.load_schema", lambda name: {"patched": name}),
+    ],
+)
+def test_accepted_analysis_freshness_is_stale_when_static_fingerprint_inputs_change(
+    tmp_path, monkeypatch, target, replacement
+):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    accepted, _state = _analyze_with_backend(repo, backend)
+    monkeypatch.setattr(target, replacement)
+
+    freshness = accepted_analysis_is_fresh(
+        repo,
+        COMPLETED_EXPERIMENT,
+        backend_name="fake",
+        backend_options_override=None,
+        timeout_seconds_override=None,
+    )
+
+    assert accepted.status == "accepted"
+    assert freshness.fresh is False
+    assert freshness.analysis_path == accepted.analysis_path
+    assert freshness.diagnostic_codes == ["stale_analysis_inputs"]
 
 
 @pytest.mark.parametrize(
