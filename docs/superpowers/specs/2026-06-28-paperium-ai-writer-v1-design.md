@@ -36,7 +36,10 @@ asks for approvals, and writes `PAPER.md` only after section-by-section approval
 - ranking and question-focus working documents under target repo root `.paperium/`;
 - final top-level `PAPER.md` only after interactive approvals.
 
-Existing experiment `README.md` files are inputs only. V1 never edits them.
+Existing experiment `README.md` files are inputs only. V1 never edits them. This is intentional:
+although the source product note originally imagined generating experiment READMEs, V1 replaces
+that with disposable `<experiment>/.paperium/analysis.md` notes because experiment READMEs may
+already be project documentation or agent-generated context.
 
 ## Responsibilities
 
@@ -192,6 +195,9 @@ The ranking artifact has a small required structure:
 - **exclude**: experiments that should not be used, with reasons;
 - **defer**: experiments that may matter but need human judgment or more work.
 
+Every selected fact-check-approved experiment must appear in exactly one of those buckets. V1 must
+not silently omit an approved experiment from the ranking artifact.
+
 V1 then creates a question-focus mapping:
 
 - original question folder;
@@ -272,6 +278,11 @@ The state file is versioned. V1 uses this minimum shape:
       "stdout_path": ".paperium/workers/worker-id/stdout.txt",
       "stderr_path": ".paperium/workers/worker-id/stderr.txt",
       "output_path": ".paperium/workers/worker-id/output.md",
+      "allowed_paths": [
+        "questions/q001/experiments/exp001",
+        "questions/q001/README.md"
+      ],
+      "approved_expansions": [],
       "failure_reason": null
     }
   ],
@@ -283,9 +294,29 @@ The state file is versioned. V1 uses this minimum shape:
     "path": ".paperium/question-focus.md",
     "approved": false
   },
-  "sections": []
+  "sections": [],
+  "final_write": {
+    "paper_path": "PAPER.md",
+    "status": "not_started|ready|written|failed",
+    "written_at": null
+  }
 }
 ```
+
+Section records use this minimum shape:
+
+```json
+{
+  "id": "q001-answer",
+  "title": "Q001 Answer",
+  "path": ".paperium/sections/q001-answer.md",
+  "status": "not_started|drafted|review_failed|approved|skipped",
+  "factual_review_status": "not_started|passed|failed"
+}
+```
+
+`final_write.status` may become `ready` only after every non-skipped section is approved and every
+required factual review has passed. `PAPER.md` may be written only from the `ready` state.
 
 On resume, `paperium` shows what is complete, what failed, and what needs user action.
 
@@ -307,12 +338,37 @@ Each worker has:
 - timeout;
 - status recorded in `.paperium/state.json`.
 
+V1 records context boundaries for each worker. Boundary enforcement is prompt-and-audit based:
+the worker runs from the target repo root for practical CLI compatibility, but the prompt lists
+allowed paths and requires the worker to request expansion before relying on anything else.
+Approved expansions are recorded in worker state. Outputs that rely on unapproved paths fail
+review.
+
 Default concurrency is two workers. The user may override it, but V1 must keep concurrency bounded
 and visible in the Rich progress UI.
 
 Timeout, cancellation, non-zero exit, missing expected output, or fact-check rejection records a
 failed worker result. Failed workers do not silently disappear from state. On resume, `paperium`
 does not automatically restart failed workers without an explicit user action or workflow step.
+
+Fact-check and factual-review workers write a small structured result, not a large evidence dump:
+
+```json
+{
+  "status": "passed|failed",
+  "findings": [
+    {
+      "severity": "error|warning",
+      "claim": "short claim text",
+      "reason": "why it is unsupported, wrong, or risky",
+      "artifact_path": "relative/path/or/null"
+    }
+  ]
+}
+```
+
+Repair loops and approval gates use only this pass/fail status plus findings. Detailed evidence
+stays in run artifacts and generated analysis notes.
 
 ## Error Handling
 
