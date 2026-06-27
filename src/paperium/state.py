@@ -64,7 +64,7 @@ class StateError(Exception):
 
 
 def _validate_enum(name: str, value: str | None, allowed: set[str]) -> None:
-    if value is not None and value not in allowed:
+    if value is not None and (not isinstance(value, str) or value not in allowed):
         raise StateError(f"invalid {name}: {value}")
 
 
@@ -77,6 +77,12 @@ def _expect_mapping(value: Any, name: str) -> dict[str, Any]:
 def _list_of_strings(value: Any, name: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise StateError(f"{name} must be a list of strings")
+    return value
+
+
+def _list_value(value: Any, name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise StateError(f"{name} must be a list")
     return value
 
 
@@ -386,17 +392,25 @@ class PaperiumState:
             phase=data.get("phase", "selecting"),
             selected_experiments=[
                 SelectedExperiment.from_dict(experiment)
-                for experiment in data.get("selected_experiments", [])
+                for experiment in _list_value(
+                    data.get("selected_experiments", []), "selected_experiments"
+                )
             ],
-            workers=[WorkerRecord.from_dict(worker) for worker in data.get("workers", [])],
+            workers=[
+                WorkerRecord.from_dict(worker)
+                for worker in _list_value(data.get("workers", []), "workers")
+            ],
             ranking=RankingState.from_dict(data.get("ranking", {})),
             dispositions_path=data.get("dispositions_path", ".paperium/dispositions.md"),
             question_focus=QuestionFocusState.from_dict(data.get("question_focus", {})),
             context_requests=[
                 ContextRequestState.from_dict(request)
-                for request in data.get("context_requests", [])
+                for request in _list_value(data.get("context_requests", []), "context_requests")
             ],
-            sections=[SectionState.from_dict(section) for section in data.get("sections", [])],
+            sections=[
+                SectionState.from_dict(section)
+                for section in _list_value(data.get("sections", []), "sections")
+            ],
             expected_section_ids=_list_of_strings(
                 data.get("expected_section_ids", []), "expected_section_ids"
             ),
