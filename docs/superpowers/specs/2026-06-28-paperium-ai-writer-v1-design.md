@@ -118,6 +118,32 @@ failure or limitation.
 V1 supports selected experiments through manual paths and an interactive menu. Automatic
 analyze-all is out of scope for V1.
 
+## Experiment Selection Contract
+
+An experiment is any selected directory that contains at least one of:
+
+- `outputs/`;
+- `README.md`;
+- `metadata.json`;
+- a run/config artifact such as `docker-compose.yml`, `docker-stack.yml`, `pyproject.toml`, or
+  executable runner scripts.
+
+Manual paths are resolved relative to the target repo root and must stay inside that repo. A
+missing path or file path is a hard failure. If a selected directory has no usable run artifacts
+for fact-checking, analysis may produce notes, but the experiment cannot pass the fact-check gate
+until the user supplies or allows relevant artifacts.
+
+The interactive menu discovers likely experiment directories under `questions/**/experiments/*`
+first. It may also include explicitly configured experiment roots in a later version, but V1 does
+not need automatic whole-repo guessing beyond the questions/experiments convention.
+
+Parent question context is resolved by walking upward from the experiment path until a parent
+directory with `README.md` is found, preferring the nearest ancestor whose path is under
+`questions/`. If no parent question README is found, the experiment may still be analyzed, but the
+state records `question_readme: null`, and the worker prompt must say that no question README was
+available. A missing or stale question README is not a hard failure because it is context only, not
+ground truth.
+
 For each selected experiment:
 
 1. `paperium` starts an analysis worker.
@@ -219,10 +245,74 @@ The target repo root `.paperium/state.json` records:
 - section approval state;
 - final write state.
 
+The state file is versioned. V1 uses this minimum shape:
+
+```json
+{
+  "schema_version": 1,
+  "phase": "selecting|analyzing|fact_checking|ranking|mapping|writing|reviewing|complete|failed",
+  "selected_experiments": [
+    {
+      "path": "questions/q001/experiments/exp001",
+      "question_readme": "questions/q001/README.md",
+      "analysis_path": "questions/q001/experiments/exp001/.paperium/analysis.md",
+      "status": "pending|running|approved|failed|needs_human_review|skipped",
+      "repair_attempts": 0
+    }
+  ],
+  "workers": [
+    {
+      "id": "worker-id",
+      "backend": "codex|claude",
+      "role": "analyze|fact_check|rank|write|review",
+      "status": "pending|running|succeeded|failed|cancelled|timed_out",
+      "experiment_path": "questions/q001/experiments/exp001",
+      "started_at": "ISO-8601 timestamp or null",
+      "ended_at": "ISO-8601 timestamp or null",
+      "stdout_path": ".paperium/workers/worker-id/stdout.txt",
+      "stderr_path": ".paperium/workers/worker-id/stderr.txt",
+      "output_path": ".paperium/workers/worker-id/output.md",
+      "failure_reason": null
+    }
+  ],
+  "ranking": {
+    "path": ".paperium/ranking.md",
+    "approved": false
+  },
+  "question_focus": {
+    "path": ".paperium/question-focus.md",
+    "approved": false
+  },
+  "sections": []
+}
+```
+
 On resume, `paperium` shows what is complete, what failed, and what needs user action.
 
 Normal runs overwrite or update selected generated artifacts. They never delete stale generated
 files automatically.
+
+## Worker Contract
+
+Workers are bounded subprocesses launched by `paperium`.
+
+Each worker has:
+
+- backend: `codex` or `claude`;
+- role: `analyze`, `fact_check`, `rank`, `write`, or `review`;
+- prompt stdin supplied by `paperium`;
+- working directory set to the target repo root;
+- explicit allowed context listed in the prompt;
+- captured stdout and stderr under `.paperium/workers/<worker-id>/`;
+- timeout;
+- status recorded in `.paperium/state.json`.
+
+Default concurrency is two workers. The user may override it, but V1 must keep concurrency bounded
+and visible in the Rich progress UI.
+
+Timeout, cancellation, non-zero exit, missing expected output, or fact-check rejection records a
+failed worker result. Failed workers do not silently disappear from state. On resume, `paperium`
+does not automatically restart failed workers without an explicit user action or workflow step.
 
 ## Error Handling
 
