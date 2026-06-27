@@ -14,6 +14,7 @@ from paperctl.analysis_menu import (
     build_experiment_menu_rows,
     load_experiment_menu_rows,
     run_checkbox_menu,
+    _read_tty_key,
 )
 from paperctl.config import load_config
 
@@ -206,6 +207,58 @@ def test_checkbox_menu_cancel_raises_menu_error(key):
 
     with pytest.raises(ExperimentMenuError, match="cancelled"):
         run_checkbox_menu(rows, input_keys=[key])
+
+
+def test_tty_key_reader_waits_briefly_for_arrow_suffix(monkeypatch):
+    class FakeStdin:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fileno(self) -> int:
+            return 0
+
+        def read(self, size: int) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return "\x1b"
+            assert size == 2
+            return "[A"
+
+    select_timeouts: list[float] = []
+    fake_stdin = FakeStdin()
+
+    def fake_select(reads, writes, errors, timeout):
+        select_timeouts.append(timeout)
+        return (reads, writes, errors)
+
+    monkeypatch.setattr(sys, "stdin", fake_stdin)
+    monkeypatch.setattr("termios.tcgetattr", lambda fd: "settings")
+    monkeypatch.setattr("termios.tcsetattr", lambda fd, when, settings: None)
+    monkeypatch.setattr("tty.setcbreak", lambda fd: None)
+    monkeypatch.setattr("paperctl.analysis_menu.select.select", fake_select)
+
+    assert _read_tty_key() == "up"
+    assert select_timeouts and select_timeouts[0] > 0
+
+
+def test_tty_key_reader_keeps_escape_as_cancel(monkeypatch):
+    class FakeStdin:
+        def fileno(self) -> int:
+            return 0
+
+        def read(self, size: int) -> str:
+            return "\x1b"
+
+    def fake_select(reads, writes, errors, timeout):
+        return ([], writes, errors)
+
+    monkeypatch.setattr(sys, "stdin", FakeStdin())
+    monkeypatch.setattr("termios.tcgetattr", lambda fd: "settings")
+    monkeypatch.setattr("termios.tcsetattr", lambda fd, when, settings: None)
+    monkeypatch.setattr("tty.setcbreak", lambda fd: None)
+    monkeypatch.setattr("paperctl.analysis_menu.select.select", fake_select)
+
+    assert _read_tty_key() == "escape"
 
 
 def test_real_loader_reports_missing_stale_and_non_candidate_rows(tmp_path):

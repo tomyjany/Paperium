@@ -14,6 +14,9 @@ from paperctl.analysis import preflight_experiment
 from paperctl.inventory import load_manifest
 
 
+_ESCAPE_SEQUENCE_TIMEOUT_SECONDS = 0.05
+
+
 class ExperimentMenuError(ValueError):
     pass
 
@@ -259,7 +262,9 @@ def _read_tty_key() -> str:
         tty.setcbreak(fd)
         char = sys.stdin.read(1)
         if char == "\x1b":
-            if not select.select([sys.stdin], [], [], 0)[0]:
+            if not select.select(
+                [sys.stdin], [], [], _ESCAPE_SEQUENCE_TIMEOUT_SECONDS
+            )[0]:
                 return "escape"
             suffix = sys.stdin.read(2)
             if suffix == "[A":
