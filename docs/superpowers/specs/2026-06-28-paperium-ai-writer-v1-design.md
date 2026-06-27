@@ -116,6 +116,9 @@ boundary, it must request them. The main session asks the user before expanding 
 user denies expansion and the worker cannot proceed honestly, the experiment stops with a visible
 failure or limitation.
 
+Worker prompts must repeat that question READMEs and experiment READMEs are context only, never
+factual authority. Numeric and factual authority comes from run artifacts.
+
 ## Experiment Analysis Flow
 
 V1 supports selected experiments through manual paths and an interactive menu. Automatic
@@ -133,8 +136,10 @@ An experiment is any selected directory that contains at least one of:
 
 Manual paths are resolved relative to the target repo root and must stay inside that repo. A
 missing path or file path is a hard failure. If a selected directory has no usable run artifacts
-for fact-checking, analysis may produce notes, but the experiment cannot pass the fact-check gate
-until the user supplies or allows relevant artifacts.
+for fact-checking, it is recorded with disposition `artifact_missing` and status
+`needs_human_review`. V1 does not run normal analysis for that experiment and it cannot influence
+ranking or `PAPER.md` until the user supplies or approves relevant run artifacts. This is a hard
+failure for paper use, not for selection visibility.
 
 The interactive menu discovers likely experiment directories under `questions/**/experiments/*`
 first. It may also include explicitly configured experiment roots in a later version, but V1 does
@@ -164,6 +169,11 @@ For each selected experiment:
 - whether the experiment is useful for the paper.
 
 It is not a rigid JSON schema.
+
+Any numeric claim in `analysis.md` must have nearby lightweight support: repository-relative
+`artifact_path` plus a machine-readable selector such as a JSON pointer, JSONL line plus field,
+CSV row/column, Markdown line range, or log line range. This is a small citation convention, not a
+full evidence-packet system.
 
 ## Fact-Check Flow
 
@@ -197,6 +207,18 @@ The ranking artifact has a small required structure:
 
 Every selected fact-check-approved experiment must appear in exactly one of those buckets. V1 must
 not silently omit an approved experiment from the ranking artifact.
+
+V1 also writes `.paperium/dispositions.md` covering every selected experiment, including failed,
+skipped, artifact-missing, and human-review cases. Each selected experiment gets one visible
+disposition before writing starts:
+
+- `included`;
+- `excluded`;
+- `deferred`;
+- `artifact_missing`;
+- `fact_check_failed`;
+- `needs_human_review`;
+- `skipped`.
 
 V1 then creates a question-focus mapping:
 
@@ -237,6 +259,9 @@ Claude is the default section prose writer. Codex is the default factual reviewe
 paper sections. A paper section that contains a factual claim not traceable to approved experiment
 notes and underlying run artifacts must be revised before approval.
 
+Any numeric claim in a paper section must trace back to an approved experiment note citation and,
+through that note, to an underlying run artifact selector.
+
 ## State And Resume
 
 The target repo root `.paperium/state.json` records:
@@ -262,6 +287,8 @@ The state file is versioned. V1 uses this minimum shape:
       "path": "questions/q001/experiments/exp001",
       "question_readme": "questions/q001/README.md",
       "analysis_path": "questions/q001/experiments/exp001/.paperium/analysis.md",
+      "fact_check_result_path": "questions/q001/experiments/exp001/.paperium/fact-check.json",
+      "disposition": "included|excluded|deferred|artifact_missing|fact_check_failed|needs_human_review|skipped|null",
       "status": "pending|running|approved|failed|needs_human_review|skipped",
       "repair_attempts": 0
     }
@@ -271,13 +298,14 @@ The state file is versioned. V1 uses this minimum shape:
       "id": "worker-id",
       "backend": "codex|claude",
       "role": "analyze|fact_check|rank|write|review",
-      "status": "pending|running|succeeded|failed|cancelled|timed_out",
+      "status": "pending|running|succeeded|failed|cancelled|timed_out|needs_context",
       "experiment_path": "questions/q001/experiments/exp001",
       "started_at": "ISO-8601 timestamp or null",
       "ended_at": "ISO-8601 timestamp or null",
       "stdout_path": ".paperium/workers/worker-id/stdout.txt",
       "stderr_path": ".paperium/workers/worker-id/stderr.txt",
       "output_path": ".paperium/workers/worker-id/output.md",
+      "result_json_path": ".paperium/workers/worker-id/result.json",
       "allowed_paths": [
         "questions/q001/experiments/exp001",
         "questions/q001/README.md"
@@ -290,10 +318,21 @@ The state file is versioned. V1 uses this minimum shape:
     "path": ".paperium/ranking.md",
     "approved": false
   },
+  "dispositions_path": ".paperium/dispositions.md",
   "question_focus": {
     "path": ".paperium/question-focus.md",
     "approved": false
   },
+  "context_requests": [
+    {
+      "id": "context-request-id",
+      "worker_id": "worker-id",
+      "requested_paths": ["questions/q001/src"],
+      "reason": "why this context is needed",
+      "status": "pending|approved|denied",
+      "decision_path": ".paperium/context-requests/context-request-id.decision.json"
+    }
+  ],
   "sections": [],
   "final_write": {
     "paper_path": "PAPER.md",
@@ -311,7 +350,8 @@ Section records use this minimum shape:
   "title": "Q001 Answer",
   "path": ".paperium/sections/q001-answer.md",
   "status": "not_started|drafted|review_failed|approved|skipped",
-  "factual_review_status": "not_started|passed|failed"
+  "factual_review_status": "not_started|passed|failed",
+  "factual_review_result_path": ".paperium/sections/q001-answer.review.json"
 }
 ```
 
@@ -344,6 +384,18 @@ allowed paths and requires the worker to request expansion before relying on any
 Approved expansions are recorded in worker state. Outputs that rely on unapproved paths fail
 review.
 
+Context expansion protocol:
+
+1. A worker that needs more context writes `.paperium/context-requests/<request-id>.json` and exits
+   with worker status `needs_context`.
+2. The request includes worker id, requested paths, and a short reason.
+3. The main session asks the user to approve or deny the request.
+4. The decision is recorded in state and in
+   `.paperium/context-requests/<request-id>.decision.json`.
+5. Approved paths are added to the next worker attempt's `approved_expansions`.
+6. Denied paths are recorded; if the worker cannot proceed honestly, the experiment becomes
+   `needs_human_review` or `skipped`.
+
 Default concurrency is two workers. The user may override it, but V1 must keep concurrency bounded
 and visible in the Rich progress UI.
 
@@ -361,14 +413,16 @@ Fact-check and factual-review workers write a small structured result, not a lar
       "severity": "error|warning",
       "claim": "short claim text",
       "reason": "why it is unsupported, wrong, or risky",
-      "artifact_path": "relative/path/or/null"
+      "artifact_path": "relative/path/or/null",
+      "selector": "JSON pointer, line range, row/column, or null"
     }
   ]
 }
 ```
 
-Repair loops and approval gates use only this pass/fail status plus findings. Detailed evidence
-stays in run artifacts and generated analysis notes.
+The JSON result is written to the worker `result_json_path`; any prose summary goes to
+`output_path`. Repair loops and approval gates use only this pass/fail status plus findings.
+Detailed evidence stays in run artifacts and generated analysis notes.
 
 ## Error Handling
 
@@ -377,7 +431,8 @@ Hard failures are visible and recoverable:
 - Codex CLI missing;
 - Claude CLI missing;
 - selected experiment path missing;
-- selected experiment has no usable run artifacts for fact-checking;
+- selected experiment has no usable run artifacts for fact-checking and therefore cannot influence
+  the paper;
 - fact-check still fails after two repair attempts;
 - user denies needed context expansion and the worker cannot proceed honestly;
 - paper section cannot pass factual review.
