@@ -10,11 +10,11 @@ from conftest import copy_fixture_repo
 from paperctl.analysis_menu import (
     ExperimentMenuError,
     ExperimentMenuRow,
+    build_questionary_choices,
     build_experiment_menu_groups,
     build_experiment_menu_rows,
     load_experiment_menu_rows,
     run_checkbox_menu,
-    _read_tty_key,
 )
 from paperctl.config import load_config
 
@@ -194,11 +194,66 @@ def test_checkbox_menu_toggles_enabled_rows_only_and_returns_selected_paths():
     assert selected == ["enabled-a", "enabled-b"]
 
 
+def test_checkbox_menu_uses_questionary_choices_for_interactive_selection():
+    rows = [
+        ExperimentMenuRow("questions/q001", "enabled-a", "a.json"),
+        ExperimentMenuRow(
+            "questions/q001",
+            "disabled",
+            "b.json",
+            enabled=False,
+            disabled_reasons=("blocked_experiment",),
+        ),
+        ExperimentMenuRow("questions/q001", "enabled-b", "c.json"),
+    ]
+    prompts = []
+
+    def fake_prompt(choices):
+        prompts.extend(choices)
+        return ["enabled-b"]
+
+    selected = run_checkbox_menu(rows, prompt_runner=fake_prompt)
+
+    assert selected == ["enabled-b"]
+    assert [choice.value for choice in prompts] == ["enabled-a", "disabled", "enabled-b"]
+    assert prompts[0].disabled is None
+    assert prompts[1].disabled == "blocked_experiment"
+
+
+def test_questionary_choices_include_disabled_reasons():
+    rows = [
+        ExperimentMenuRow("questions/q001", "enabled", "a.json"),
+        ExperimentMenuRow(
+            "questions/q001",
+            "disabled",
+            "b.json",
+            enabled=False,
+            disabled_reasons=("stale_evidence", "missing_evidence"),
+        ),
+    ]
+
+    choices = build_questionary_choices(rows)
+
+    assert choices[0].title == "enabled"
+    assert choices[0].value == "enabled"
+    assert choices[0].disabled is None
+    assert choices[1].title == "disabled (stale_evidence, missing_evidence)"
+    assert choices[1].value == "disabled"
+    assert choices[1].disabled == "stale_evidence, missing_evidence"
+
+
 def test_checkbox_menu_empty_selection_raises_menu_error():
     rows = [ExperimentMenuRow("questions/q001", "enabled", "a.json")]
 
     with pytest.raises(ExperimentMenuError, match="no experiments selected"):
         run_checkbox_menu(rows, input_keys=["enter"])
+
+
+def test_checkbox_menu_empty_questionary_selection_raises_menu_error():
+    rows = [ExperimentMenuRow("questions/q001", "enabled", "a.json")]
+
+    with pytest.raises(ExperimentMenuError, match="no experiments selected"):
+        run_checkbox_menu(rows, prompt_runner=lambda _choices: [])
 
 
 @pytest.mark.parametrize("key", ["q", "escape"])
@@ -209,56 +264,11 @@ def test_checkbox_menu_cancel_raises_menu_error(key):
         run_checkbox_menu(rows, input_keys=[key])
 
 
-def test_tty_key_reader_waits_briefly_for_arrow_suffix(monkeypatch):
-    class FakeStdin:
-        def __init__(self) -> None:
-            self.calls = 0
+def test_checkbox_menu_questionary_cancel_raises_menu_error():
+    rows = [ExperimentMenuRow("questions/q001", "enabled", "a.json")]
 
-        def fileno(self) -> int:
-            return 0
-
-        def read(self, size: int) -> str:
-            self.calls += 1
-            if self.calls == 1:
-                return "\x1b"
-            assert size == 2
-            return "[A"
-
-    select_timeouts: list[float] = []
-    fake_stdin = FakeStdin()
-
-    def fake_select(reads, writes, errors, timeout):
-        select_timeouts.append(timeout)
-        return (reads, writes, errors)
-
-    monkeypatch.setattr(sys, "stdin", fake_stdin)
-    monkeypatch.setattr("termios.tcgetattr", lambda fd: "settings")
-    monkeypatch.setattr("termios.tcsetattr", lambda fd, when, settings: None)
-    monkeypatch.setattr("tty.setcbreak", lambda fd: None)
-    monkeypatch.setattr("paperctl.analysis_menu.select.select", fake_select)
-
-    assert _read_tty_key() == "up"
-    assert select_timeouts and select_timeouts[0] > 0
-
-
-def test_tty_key_reader_keeps_escape_as_cancel(monkeypatch):
-    class FakeStdin:
-        def fileno(self) -> int:
-            return 0
-
-        def read(self, size: int) -> str:
-            return "\x1b"
-
-    def fake_select(reads, writes, errors, timeout):
-        return ([], writes, errors)
-
-    monkeypatch.setattr(sys, "stdin", FakeStdin())
-    monkeypatch.setattr("termios.tcgetattr", lambda fd: "settings")
-    monkeypatch.setattr("termios.tcsetattr", lambda fd, when, settings: None)
-    monkeypatch.setattr("tty.setcbreak", lambda fd: None)
-    monkeypatch.setattr("paperctl.analysis_menu.select.select", fake_select)
-
-    assert _read_tty_key() == "escape"
+    with pytest.raises(ExperimentMenuError, match="cancelled"):
+        run_checkbox_menu(rows, prompt_runner=lambda _choices: None)
 
 
 def test_real_loader_reports_missing_stale_and_non_candidate_rows(tmp_path):

@@ -538,6 +538,8 @@ def test_analyze_rich_progress_callback_is_passed_for_interactive_stdout(
     output = capsys.readouterr().out
     assert exit_code == 0
     assert callbacks and callable(callbacks[0])
+    assert "Analyzing experiments" in output
+    assert "1/1 done" in output
     assert "running" in output
     assert COMPLETED_EXPERIMENT in output
 

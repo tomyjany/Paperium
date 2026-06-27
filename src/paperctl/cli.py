@@ -210,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         backend_options_override = _analysis_backend_options_override(args)
         use_rich = _use_rich(args)
         progress = RichAnalyzeProgressReporter() if use_rich else None
+        result = None
         try:
             result = analyze_experiments(
                 repo,
@@ -221,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
                 force=args.force,
                 on_update=progress.on_update if progress is not None else None,
             )
+            if progress is not None:
+                for item in result.items:
+                    progress.on_update(item)
         except (ConfigError, AnalysisError) as exc:
             print(f"{parser.prog}: {exc}", file=sys.stderr)
             return DETERMINISTIC_FAILURE
