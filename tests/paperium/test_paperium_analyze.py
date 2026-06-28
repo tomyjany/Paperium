@@ -168,6 +168,14 @@ def test_load_fact_check_result_validates_finding_fields_and_selector_rules(tmp_
     assert load_fact_check_result(path).findings[0]["artifact_path"] is None
 
 
+def test_load_fact_check_result_rejects_passed_result_with_findings(tmp_path):
+    path = tmp_path / "fact-check.json"
+    _write_fact_check(path, {"status": "passed", "findings": [_finding()]})
+
+    with pytest.raises(FactCheckError):
+        load_fact_check_result(path)
+
+
 @pytest.mark.parametrize(
     ("reason", "artifact_path", "selector"),
     [

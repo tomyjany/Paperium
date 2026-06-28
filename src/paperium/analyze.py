@@ -84,6 +84,8 @@ def load_fact_check_result(
     findings = data["findings"]
     if not isinstance(findings, list):
         raise FactCheckError("fact-check findings must be a list")
+    if status == "passed" and findings:
+        raise FactCheckError("passed fact-check results must not include findings")
     if status == "failed" and not findings:
         raise FactCheckError("failed fact-check results require at least one finding")
 
