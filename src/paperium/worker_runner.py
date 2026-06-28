@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
+from paperium import boundary_audit
 from paperium.backends import backend_command
 from paperium.workers import WorkerResult, WorkerSpec
 
@@ -32,6 +33,7 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
 
     context_dir = repo / ".paperium" / "context-requests"
     baseline_requests = _request_snapshot(context_dir)
+    before_paths, before_snapshot = _boundary_snapshot(repo)
 
     started_at = _utc_now()
     process = subprocess.Popen(
@@ -61,6 +63,17 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     ended_at = _utc_now()
     stdout_path.write_text(_text(stdout), encoding="utf-8")
     stderr_path.write_text(_text(stderr), encoding="utf-8")
+    after_paths, after_snapshot = _boundary_snapshot(repo)
+    changed_paths = list(dict.fromkeys([*before_paths, *after_paths]))
+    changed_paths.extend(
+        path for path in after_snapshot if path not in changed_paths
+    )
+    boundary_violations = boundary_audit.find_disallowed_writes(
+        changed_paths=changed_paths,
+        writable_paths=spec.writable_paths,
+        before_snapshot=before_snapshot,
+        after_snapshot=after_snapshot,
+    )
 
     context_request_state = _context_request_state(
         context_dir, baseline_requests, spec.worker_id
@@ -71,7 +84,10 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     failure_reason = None
     canonical_result_path = None
 
-    if timed_out:
+    if boundary_violations:
+        status = "failed"
+        failure_reason = "write_boundary_violation"
+    elif timed_out:
         status = "timed_out"
         failure_reason = "timeout"
     elif context_request_state == "current_worker" and not context_request_allowed:
@@ -117,6 +133,16 @@ def _safe_worker_dir(repo: Path, worker_id: str) -> Path | None:
     if not _is_relative_to(worker_dir.resolve(strict=False), workers_root.resolve(strict=False)):
         return None
     return worker_dir
+
+
+def _boundary_snapshot(repo: Path) -> tuple[list[str], boundary_audit.Snapshot]:
+    changed_paths = boundary_audit.changed_paths_from_porcelain(
+        boundary_audit.git_status_porcelain(repo)
+    )
+    snapshot = boundary_audit.snapshot_changed_paths(repo, changed_paths)
+    generated_snapshot = boundary_audit.snapshot_generated_paths(repo)
+    snapshot.update(generated_snapshot)
+    return changed_paths, snapshot
 
 
 def _safe_repo_relative_path(repo: Path, repo_relative_path: str) -> Path | None:
