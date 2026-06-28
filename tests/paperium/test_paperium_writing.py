@@ -62,6 +62,22 @@ def test_approved_section_without_review_result_path_cannot_write():
 def test_malformed_section_entries_and_paths_cannot_write():
     assert can_write_paper(["not a dict"], final_write_status="ready") is False
     assert can_write_paper([approved_section(path="")], final_write_status="ready") is False
+    assert can_write_paper([approved_section(path="  ")], final_write_status="ready") is False
+    assert can_write_paper([approved_section(path=1)], final_write_status="ready") is False
+    assert (
+        can_write_paper(
+            [approved_section(factual_review_result_path="  ")],
+            final_write_status="ready",
+        )
+        is False
+    )
+    assert (
+        can_write_paper(
+            [approved_section(factual_review_result_path=object())],
+            final_write_status="ready",
+        )
+        is False
+    )
 
 
 def test_render_paper_concatenates_one_section(tmp_path):

@@ -22,9 +22,9 @@ def can_write_paper(sections, final_write_status="not_started") -> bool:
             return False
         if section.get("factual_review_status") != "passed":
             return False
-        if not section.get("factual_review_result_path"):
+        if not _is_non_blank_string(section.get("factual_review_result_path")):
             return False
-        if not section.get("path"):
+        if not _is_non_blank_string(section.get("path")):
             return False
 
         has_writable_section = True
@@ -37,3 +37,7 @@ def render_paper(paths) -> str:
     if not sections:
         return ""
     return "\n\n".join(sections) + "\n"
+
+
+def _is_non_blank_string(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
