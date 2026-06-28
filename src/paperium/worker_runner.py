@@ -160,16 +160,20 @@ def _request_snapshot(context_dir: Path) -> dict[Path, str]:
 def _context_request_state(
     context_dir: Path, baseline_requests: dict[Path, str], worker_id: str
 ) -> str:
-    for request_path, digest in _request_snapshot(context_dir).items():
-        if baseline_requests.get(request_path) == digest:
-            continue
+    changed_requests = [
+        request_path
+        for request_path, digest in _request_snapshot(context_dir).items()
+        if baseline_requests.get(request_path) != digest
+    ]
+    has_current_worker_request = False
+    for request_path in sorted(changed_requests):
         try:
             request = json.loads(request_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return "invalid"
         if request.get("worker_id") == worker_id:
-            return "current_worker"
-    return "none"
+            has_current_worker_request = True
+    return "current_worker" if has_current_worker_request else "none"
 
 
 def _reap_after_timeout(process: subprocess.Popen) -> tuple[str | bytes | None, str | bytes | None]:

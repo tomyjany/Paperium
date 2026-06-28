@@ -2,6 +2,7 @@ import subprocess
 
 import pytest
 
+from paperium import worker_runner
 from paperium.workers import WorkerSpec
 from paperium.worker_runner import run_worker
 
@@ -280,6 +281,85 @@ def test_run_worker_malformed_context_request_json_fails(tmp_path, monkeypatch):
         (request_dir / "req1.json").write_text("{not json", encoding="utf-8")
         return FakeProcess()
 
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec(
+        "w1",
+        "codex",
+        "analyze",
+        [],
+        [".paperium/workers/w1", ".paperium/context-requests"],
+        "prompt",
+        30,
+    )
+    result = run_worker(repo, spec)
+    assert result.status == "failed"
+    assert result.failure_reason == "invalid_context_request"
+
+
+@pytest.mark.parametrize(
+    ("valid_request_name", "malformed_request_name"),
+    [
+        ("aaa-valid.json", "zzz-malformed.json"),
+        ("zzz-valid.json", "aaa-malformed.json"),
+    ],
+)
+def test_run_worker_malformed_changed_context_request_wins_over_valid_request(
+    tmp_path, monkeypatch, valid_request_name, malformed_request_name
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fake_popen(*args, **kwargs):
+        request_dir = repo / ".paperium/context-requests"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        (request_dir / valid_request_name).write_text(
+            '{"id": "valid", "worker_id": "w1"}', encoding="utf-8"
+        )
+        (request_dir / malformed_request_name).write_text("{not json", encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec(
+        "w1",
+        "codex",
+        "analyze",
+        [],
+        [".paperium/workers/w1", ".paperium/context-requests"],
+        "prompt",
+        30,
+    )
+    result = run_worker(repo, spec)
+    assert result.status == "failed"
+    assert result.failure_reason == "invalid_context_request"
+
+
+def test_run_worker_malformed_changed_context_request_wins_when_snapshot_lists_valid_first(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    request_dir = repo / ".paperium/context-requests"
+    valid_request = request_dir / "valid.json"
+    malformed_request = request_dir / "malformed.json"
+    snapshot_calls = 0
+
+    def fake_request_snapshot(context_dir):
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        if snapshot_calls == 1:
+            return {}
+        return {
+            valid_request: "valid-digest",
+            malformed_request: "malformed-digest",
+        }
+
+    def fake_popen(*args, **kwargs):
+        request_dir.mkdir(parents=True, exist_ok=True)
+        valid_request.write_text('{"id": "valid", "worker_id": "w1"}', encoding="utf-8")
+        malformed_request.write_text("{not json", encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr(worker_runner, "_request_snapshot", fake_request_snapshot)
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     spec = WorkerSpec(
         "w1",
