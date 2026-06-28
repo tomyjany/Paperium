@@ -15,6 +15,7 @@ def test_analysis_prompt_marks_readmes_as_context_only():
     )
     assert "question README" in prompt
     assert "experiment README" in prompt
+    assert "questions/q001/experiments/exp001/README.md" in prompt
     assert "context only" in prompt
     assert "never factual authority" in prompt
     assert "run artifacts" in prompt
