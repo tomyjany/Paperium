@@ -60,6 +60,20 @@ def test_init_creates_state_and_gitignore(tmp_path, capsys):
     assert captured.err == ""
 
 
+def test_init_without_repo_uses_current_git_root(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    nested = repo / "a" / "b"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    monkeypatch.chdir(nested)
+
+    assert main(["init"]) == 0
+
+    assert (repo / ".paperium" / "state.json").exists()
+    assert not (nested / ".paperium" / "state.json").exists()
+    assert str(repo / ".paperium" / "state.json") in capsys.readouterr().out
+
+
 def test_init_does_not_overwrite_existing_state(tmp_path, capsys):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -80,7 +94,7 @@ def test_init_missing_repo_returns_failure(tmp_path, capsys):
     assert main(["--repo", str(missing_repo), "init"]) == 2
 
     captured = capsys.readouterr()
-    assert "repository does not exist" in captured.err
+    assert "target repo does not exist" in captured.err
     assert str(missing_repo) in captured.err
     assert captured.out == ""
 

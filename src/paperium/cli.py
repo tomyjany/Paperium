@@ -4,6 +4,7 @@ from pathlib import Path
 
 from paperium.gitignore import ensure_paperium_gitignore
 from paperium.output import format_status_plain
+from paperium.repo import RepoError, resolve_repo
 from paperium.state import PaperiumState, StateError, load_state, save_state
 
 SUCCESS = 0
@@ -28,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _repo_path(repo_arg: str | None) -> Path:
-    return Path(repo_arg) if repo_arg is not None else Path.cwd()
+    return resolve_repo(repo_arg, Path.cwd())
 
 
 def _state_path(repo: Path) -> Path:
@@ -76,7 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return SUCCESS
-    repo = _repo_path(args.repo)
+    try:
+        repo = _repo_path(args.repo)
+    except RepoError as exc:
+        print(f"paperium: {exc}", file=sys.stderr)
+        return DETERMINISTIC_FAILURE
     if args.command == "init":
         return _run_init(repo)
     if args.command == "status":
