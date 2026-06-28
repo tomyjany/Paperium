@@ -11,6 +11,7 @@ def prepare_selected_experiment(repo: Path, exp: Path) -> SelectedExperiment:
     exp = exp.resolve()
     experiment_path = _repo_relative_posix(repo, exp)
     paperium_dir = exp / ".paperium"
+    _validate_paperium_output_dir(repo, paperium_dir)
     paperium_dir.mkdir(exist_ok=True)
 
     question_readme = resolve_question_readme(repo, exp)
@@ -42,3 +43,16 @@ def _repo_relative_posix(repo: Path, path: Path) -> str:
         return path.relative_to(repo).as_posix()
     except ValueError as exc:
         raise ValueError(f"path is outside repository: {path}") from exc
+
+
+def _validate_paperium_output_dir(repo: Path, paperium_dir: Path) -> None:
+    resolved = paperium_dir.resolve()
+    if paperium_dir.is_symlink():
+        try:
+            resolved.relative_to(repo)
+        except ValueError as exc:
+            raise ValueError(
+                f".paperium symlink resolves outside repository: {paperium_dir}"
+            ) from exc
+        raise ValueError(f".paperium symlink is not allowed: {paperium_dir}")
+    _repo_relative_posix(repo, resolved)

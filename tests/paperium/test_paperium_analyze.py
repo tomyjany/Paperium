@@ -65,3 +65,19 @@ def test_prepare_selected_experiment_rejects_experiment_outside_repo(tmp_path):
     outside.mkdir()
     with pytest.raises(ValueError, match="outside repository"):
         prepare_selected_experiment(repo, outside)
+
+
+def test_prepare_selected_experiment_rejects_symlinked_output_dir_outside_repo(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    exp = repo / "questions/q001/experiments/exp001"
+    outside = tmp_path / "outside"
+    exp.mkdir(parents=True)
+    outside.mkdir()
+    (exp / ".paperium").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match=r"\.paperium.*symlink.*outside"):
+        prepare_selected_experiment(repo, exp)
+
+    assert list(outside.iterdir()) == []
