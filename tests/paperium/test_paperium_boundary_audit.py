@@ -95,3 +95,41 @@ def test_dirty_repo_content_change_outside_writable_roots_is_violation(tmp_path)
         before_snapshot=before,
         after_snapshot=after,
     ) == ["questions/q001/README.md"]
+
+
+def test_unchanged_pre_existing_dirty_file_outside_writable_roots_is_not_violation(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    dirty = repo / "questions/q001/README.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_text("dirty")
+
+    before = snapshot_changed_paths(repo, ["questions/q001/README.md"])
+    after = snapshot_changed_paths(repo, ["questions/q001/README.md"])
+
+    assert (
+        find_disallowed_writes(
+            changed_paths=["questions/q001/README.md"],
+            writable_paths=[".paperium/workers/w1"],
+            before_snapshot=before,
+            after_snapshot=after,
+        )
+        == []
+    )
+
+
+def test_new_file_outside_writable_roots_is_snapshot_violation(tmp_path):
+    repo = tmp_path / "repo"
+    new_file = repo / "questions/q001/README.md"
+    before = snapshot_changed_paths(repo, ["questions/q001/README.md"])
+    new_file.parent.mkdir(parents=True)
+    new_file.write_text("new")
+    after = snapshot_changed_paths(repo, ["questions/q001/README.md"])
+
+    assert find_disallowed_writes(
+        changed_paths=["questions/q001/README.md"],
+        writable_paths=[".paperium/workers/w1"],
+        before_snapshot=before,
+        after_snapshot=after,
+    ) == ["questions/q001/README.md"]

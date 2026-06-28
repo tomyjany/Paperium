@@ -33,7 +33,10 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
 
     context_dir = repo / ".paperium" / "context-requests"
     baseline_requests = _request_snapshot(context_dir)
-    before_paths, before_snapshot = _boundary_snapshot(repo)
+    try:
+        before_paths, before_snapshot = _boundary_snapshot(repo)
+    except boundary_audit.BoundaryAuditError:
+        return _failed_result(repo, spec, "boundary_audit_failed")
 
     started_at = _utc_now()
     process = subprocess.Popen(
@@ -63,7 +66,10 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     ended_at = _utc_now()
     stdout_path.write_text(_text(stdout), encoding="utf-8")
     stderr_path.write_text(_text(stderr), encoding="utf-8")
-    after_paths, after_snapshot = _boundary_snapshot(repo)
+    try:
+        after_paths, after_snapshot = _boundary_snapshot(repo)
+    except boundary_audit.BoundaryAuditError:
+        return _failed_result(repo, spec, "boundary_audit_failed")
     changed_paths = list(dict.fromkeys([*before_paths, *after_paths]))
     changed_paths.extend(
         path for path in after_snapshot if path not in changed_paths

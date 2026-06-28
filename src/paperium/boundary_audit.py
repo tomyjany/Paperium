@@ -8,6 +8,10 @@ from pathlib import Path, PurePosixPath
 Snapshot = dict[str, str | None]
 
 
+class BoundaryAuditError(RuntimeError):
+    pass
+
+
 def git_status_porcelain(repo: Path) -> str:
     if not (repo / ".git").exists():
         return ""
@@ -21,7 +25,7 @@ def git_status_porcelain(repo: Path) -> str:
         check=False,
     )
     if result.returncode != 0:
-        return ""
+        raise BoundaryAuditError("git status failed")
     return result.stdout
 
 

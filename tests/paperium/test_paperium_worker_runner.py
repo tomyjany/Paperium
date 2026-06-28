@@ -134,6 +134,27 @@ def test_run_worker_records_nonzero_exit_as_failed(tmp_path, monkeypatch):
     assert result.failure_reason == "nonzero_exit:2"
 
 
+def test_run_worker_fails_closed_when_git_status_fails_before_worker_starts(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 128, "", "fatal: not a git repository")
+
+    def fake_popen(*args, **kwargs):
+        raise AssertionError("worker should not start when boundary audit cannot run")
+
+    monkeypatch.setattr(worker_runner.boundary_audit.subprocess, "run", fake_run)
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec("w1", "codex", "analyze", [], [".paperium/workers/w1"], "prompt", 30)
+    result = run_worker(repo, spec)
+    assert result.status == "failed"
+    assert result.failure_reason == "boundary_audit_failed"
+
+
 def test_run_worker_copies_result_json_to_canonical_path(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
