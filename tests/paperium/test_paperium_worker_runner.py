@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from paperium.workers import WorkerSpec
 from paperium.worker_runner import run_worker
 
@@ -24,10 +26,11 @@ def test_run_worker_sends_prompt_on_stdin_and_captures_output(tmp_path, monkeypa
     repo.mkdir()
     process = FakeProcess()
 
-    def fake_popen(cmd, cwd, text, stdin, stdout, stderr):
+    def fake_popen(cmd, cwd, text, encoding, stdin, stdout, stderr):
         assert cmd == ["codex", "exec", "-"]
         assert cwd == repo
         assert text is True
+        assert encoding == "utf-8"
         assert stdin == subprocess.PIPE
         assert stdout == subprocess.PIPE
         assert stderr == subprocess.PIPE
@@ -50,6 +53,72 @@ def test_run_worker_sends_prompt_on_stdin_and_captures_output(tmp_path, monkeypa
     assert process.input == "analyze this"
     assert (repo / ".paperium/workers/w1/stdout.txt").read_text() == "ok"
     assert (repo / ".paperium/workers/w1/stderr.txt").read_text() == ""
+
+
+def test_run_worker_rejects_worker_id_path_traversal_without_writing_outside_workers(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fake_popen(*args, **kwargs):
+        raise AssertionError("invalid worker id should not spawn a subprocess")
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec(
+        "../escape",
+        "codex",
+        "analyze",
+        [],
+        [".paperium/workers/../escape"],
+        "prompt",
+        30,
+    )
+    result = run_worker(repo, spec)
+    assert result.status == "failed"
+    assert result.failure_reason == "invalid_worker_id"
+    assert not (repo / ".paperium/escape/stdout.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "canonical_result_path_kind",
+    ["traversal", "absolute"],
+)
+def test_run_worker_rejects_unsafe_canonical_result_path_without_copying_outside_repo(
+    tmp_path, monkeypatch, canonical_result_path_kind
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside_path = tmp_path / "outside.json"
+    canonical_result_path = (
+        "../outside.json"
+        if canonical_result_path_kind == "traversal"
+        else str(outside_path)
+    )
+
+    def fake_popen(*args, **kwargs):
+        worker_dir = repo / ".paperium/workers/w1"
+        worker_dir.mkdir(parents=True, exist_ok=True)
+        (worker_dir / "result.json").write_text(
+            '{"status": "passed", "findings": []}', encoding="utf-8"
+        )
+        return FakeProcess()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec(
+        "w1",
+        "codex",
+        "fact_check",
+        [],
+        [".paperium/workers/w1"],
+        "prompt",
+        30,
+        canonical_result_path=canonical_result_path,
+    )
+    result = run_worker(repo, spec)
+    assert result.status == "failed"
+    assert result.failure_reason == "invalid_canonical_result_path"
+    assert not outside_path.exists()
 
 
 def test_run_worker_records_nonzero_exit_as_failed(tmp_path, monkeypatch):
@@ -174,6 +243,93 @@ def test_run_worker_ignores_stale_or_other_worker_context_requests(tmp_path, mon
     assert result.status == "succeeded"
 
 
+def test_run_worker_detects_overwritten_current_worker_context_request(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    request_dir = repo / ".paperium/context-requests"
+    request_dir.mkdir(parents=True)
+    request_path = request_dir / "req1.json"
+    request_path.write_text('{"id": "req1", "worker_id": "old-worker"}', encoding="utf-8")
+
+    def fake_popen(*args, **kwargs):
+        request_path.write_text('{"id": "req1", "worker_id": "w1"}', encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec(
+        "w1",
+        "codex",
+        "analyze",
+        [],
+        [".paperium/workers/w1", ".paperium/context-requests"],
+        "prompt",
+        30,
+    )
+    result = run_worker(repo, spec)
+    assert result.status == "needs_context"
+
+
+def test_run_worker_malformed_context_request_json_fails(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fake_popen(*args, **kwargs):
+        request_dir = repo / ".paperium/context-requests"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        (request_dir / "req1.json").write_text("{not json", encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec(
+        "w1",
+        "codex",
+        "analyze",
+        [],
+        [".paperium/workers/w1", ".paperium/context-requests"],
+        "prompt",
+        30,
+    )
+    result = run_worker(repo, spec)
+    assert result.status == "failed"
+    assert result.failure_reason == "invalid_context_request"
+
+
+def test_run_worker_timeout_reaps_process_and_captures_final_buffered_output(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    class TimeoutThenFinalProcess(FakeProcess):
+        returncode = None
+
+        def __init__(self):
+            super().__init__()
+            self.communicate_calls = 0
+
+        def communicate(self, input=None, timeout=None):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                self.input = input
+                self.timeout = timeout
+                raise subprocess.TimeoutExpired(
+                    ["codex"], timeout, output="partial", stderr="slow"
+                )
+            return "final", "done"
+
+    process = TimeoutThenFinalProcess()
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: process)
+    spec = WorkerSpec("w1", "codex", "analyze", [], [".paperium/workers/w1"], "prompt", 1)
+    result = run_worker(repo, spec)
+    assert result.status == "timed_out"
+    assert result.failure_reason == "timeout"
+    assert process.killed is True
+    assert process.communicate_calls == 2
+    assert (repo / ".paperium/workers/w1/stdout.txt").read_text(encoding="utf-8") == "final"
+    assert (repo / ".paperium/workers/w1/stderr.txt").read_text(encoding="utf-8") == "done"
+
+
 def test_run_worker_timeout_kills_process_and_captures_partial_output(
     tmp_path, monkeypatch
 ):
@@ -183,7 +339,14 @@ def test_run_worker_timeout_kills_process_and_captures_partial_output(
     class TimeoutProcess(FakeProcess):
         returncode = None
 
+        def __init__(self):
+            super().__init__()
+            self.communicate_calls = 0
+
         def communicate(self, input=None, timeout=None):
+            self.communicate_calls += 1
+            if self.communicate_calls > 1:
+                return "", ""
             self.input = input
             self.timeout = timeout
             raise subprocess.TimeoutExpired(
@@ -197,5 +360,6 @@ def test_run_worker_timeout_kills_process_and_captures_partial_output(
     assert result.status == "timed_out"
     assert result.failure_reason == "timeout"
     assert process.killed is True
-    assert (repo / ".paperium/workers/w1/stdout.txt").read_text() == "partial"
-    assert (repo / ".paperium/workers/w1/stderr.txt").read_text() == "slow"
+    assert process.communicate_calls == 2
+    assert (repo / ".paperium/workers/w1/stdout.txt").read_text(encoding="utf-8") == "partial"
+    assert (repo / ".paperium/workers/w1/stderr.txt").read_text(encoding="utf-8") == "slow"
