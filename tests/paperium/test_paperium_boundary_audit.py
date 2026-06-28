@@ -1,9 +1,12 @@
 from paperium.boundary_audit import (
+    BoundaryAuditError,
     changed_paths_from_porcelain,
     find_disallowed_writes,
+    git_status_porcelain,
     snapshot_changed_paths,
     snapshot_generated_paths,
 )
+import pytest
 
 
 def test_disallowed_writes_detects_paths_outside_writable_roots():
@@ -81,6 +84,49 @@ def test_ignored_paperium_files_are_still_audited(tmp_path):
     ) == [".paperium/other-worker/output.md"]
 
 
+def test_generated_snapshot_refuses_symlinked_root_paperium(tmp_path):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (repo / ".paperium").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(BoundaryAuditError):
+        snapshot_generated_paths(repo)
+
+
+def test_generated_snapshot_refuses_symlinked_paperium_file_escape(tmp_path):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside.txt"
+    paperium = repo / ".paperium"
+    paperium.mkdir(parents=True)
+    outside.write_text("outside", encoding="utf-8")
+    (paperium / "leak.txt").symlink_to(outside)
+
+    with pytest.raises(BoundaryAuditError):
+        snapshot_generated_paths(repo)
+
+
+def test_generated_snapshot_is_bounded_to_explicit_generated_roots(tmp_path):
+    repo = tmp_path / "repo"
+    root_file = repo / ".paperium/workers/w1/result.json"
+    explicit_file = repo / "questions/q001/experiments/exp001/.paperium/analysis.json"
+    unrelated_file = repo / "questions/q999/experiments/exp999/.paperium/analysis.json"
+    for path in (root_file, explicit_file, unrelated_file):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+
+    snapshot = snapshot_generated_paths(
+        repo,
+        generated_roots=["questions/q001/experiments/exp001/.paperium"],
+    )
+
+    assert sorted(snapshot) == [
+        ".paperium/workers/w1/result.json",
+        "questions/q001/experiments/exp001/.paperium/analysis.json",
+    ]
+
+
 def test_dirty_repo_content_change_outside_writable_roots_is_violation(tmp_path):
     repo = tmp_path / "repo"
     changed = repo / "questions/q001/README.md"
@@ -133,3 +179,17 @@ def test_new_file_outside_writable_roots_is_snapshot_violation(tmp_path):
         before_snapshot=before,
         after_snapshot=after,
     ) == ["questions/q001/README.md"]
+
+
+def test_git_status_porcelain_wraps_launch_oserror(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    def fake_run(*args, **kwargs):
+        raise FileNotFoundError("git missing")
+
+    monkeypatch.setattr("paperium.boundary_audit.subprocess.run", fake_run)
+
+    with pytest.raises(BoundaryAuditError):
+        git_status_porcelain(repo)

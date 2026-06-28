@@ -15,15 +15,18 @@ class BoundaryAuditError(RuntimeError):
 def git_status_porcelain(repo: Path) -> str:
     if not (repo / ".git").exists():
         return ""
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=repo,
-        text=True,
-        encoding="utf-8",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo,
+            text=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise BoundaryAuditError("git status failed") from exc
     if result.returncode != 0:
         raise BoundaryAuditError("git status failed")
     return result.stdout
@@ -45,17 +48,21 @@ def snapshot_changed_paths(repo: Path, changed_paths: list[str]) -> Snapshot:
     snapshot = {}
     for changed_path in changed_paths:
         path = repo / changed_path
-        snapshot[changed_path] = _file_hash(path) if path.exists() else None
+        snapshot[changed_path] = _file_hash(repo, path) if path.exists() else None
     return snapshot
 
 
-def snapshot_generated_paths(repo: Path) -> Snapshot:
+def snapshot_generated_paths(
+    repo: Path, generated_roots: list[str] | None = None
+) -> Snapshot:
     snapshot = {}
-    for generated_dir in _generated_dirs(repo):
+    for generated_dir in _generated_dirs(repo, generated_roots):
         for path in sorted(generated_dir.rglob("*")):
+            if path.is_symlink():
+                raise BoundaryAuditError("generated path is a symlink")
             if path.is_file():
                 repo_path = path.relative_to(repo).as_posix()
-                snapshot[repo_path] = _file_hash(path)
+                snapshot[repo_path] = _file_hash(repo, path)
     return snapshot
 
 
@@ -114,18 +121,45 @@ def _is_writable_path(changed_path: str, writable_paths: list[str]) -> bool:
     return False
 
 
-def _generated_dirs(repo: Path) -> list[Path]:
+def _generated_dirs(repo: Path, generated_roots: list[str] | None) -> list[Path]:
     dirs = []
     root_generated = repo / ".paperium"
+    if root_generated.is_symlink():
+        raise BoundaryAuditError("generated root is a symlink")
     if root_generated.is_dir():
         dirs.append(root_generated)
-    for path in sorted(repo.rglob(".paperium")):
-        if path == root_generated:
+    for generated_root in generated_roots or []:
+        path = _safe_generated_root(repo, generated_root)
+        if path == root_generated or not path.exists():
             continue
+        if path.is_symlink():
+            raise BoundaryAuditError("generated root is a symlink")
         if path.is_dir():
             dirs.append(path)
     return dirs
 
 
-def _file_hash(path: Path) -> str:
+def _safe_generated_root(repo: Path, generated_root: str) -> Path:
+    root = Path(generated_root)
+    if root.is_absolute() or ".." in root.parts:
+        raise BoundaryAuditError("generated root escapes repository")
+    path = repo / root
+    if not _is_relative_to(path.resolve(strict=False), repo.resolve(strict=False)):
+        raise BoundaryAuditError("generated root escapes repository")
+    return path
+
+
+def _file_hash(repo: Path, path: Path) -> str:
+    if path.is_symlink():
+        raise BoundaryAuditError("generated path is a symlink")
+    if not _is_relative_to(path.resolve(strict=False), repo.resolve(strict=False)):
+        raise BoundaryAuditError("generated path escapes repository")
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True

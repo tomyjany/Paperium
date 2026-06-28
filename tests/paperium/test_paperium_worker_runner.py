@@ -56,6 +56,63 @@ def test_run_worker_sends_prompt_on_stdin_and_captures_output(tmp_path, monkeypa
     assert (repo / ".paperium/workers/w1/stderr.txt").read_text() == ""
 
 
+def test_run_worker_refuses_preexisting_stdout_symlink_escape_without_overwrite(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+    worker_dir = repo / ".paperium/workers/w1"
+    worker_dir.mkdir(parents=True)
+    (worker_dir / "stdout.txt").symlink_to(outside)
+
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess(stdout="pwn"))
+    spec = WorkerSpec("w1", "codex", "analyze", [], [".paperium/workers/w1"], "prompt", 30)
+
+    result = run_worker(repo, spec)
+
+    assert result.status == "failed"
+    assert result.failure_reason == "boundary_audit_failed"
+    assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_run_worker_refuses_symlinked_paperium_directory_before_mkdir(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (repo / ".paperium").symlink_to(outside, target_is_directory=True)
+
+    def fake_popen(*args, **kwargs):
+        raise AssertionError("unsafe worker directory should not start a subprocess")
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec("w1", "codex", "analyze", [], [".paperium/workers/w1"], "prompt", 30)
+
+    result = run_worker(repo, spec)
+
+    assert result.status == "failed"
+    assert result.failure_reason == "boundary_audit_failed"
+    assert not (outside / "workers").exists()
+
+
+def test_run_worker_does_not_count_runner_output_capture_as_worker_write(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess(stdout="ok"))
+    spec = WorkerSpec("w1", "codex", "analyze", [], [], "prompt", 30)
+
+    result = run_worker(repo, spec)
+
+    assert result.status == "succeeded"
+    assert result.failure_reason is None
+
+
 def test_run_worker_rejects_worker_id_path_traversal_without_writing_outside_workers(
     tmp_path, monkeypatch
 ):
@@ -168,7 +225,7 @@ def test_run_worker_fails_closed_when_boundary_audit_fails_after_worker_starts(
     )
     worker_started = False
 
-    def fake_boundary_snapshot(repo):
+    def fake_boundary_snapshot(repo, spec):
         snapshot = next(snapshots)
         if isinstance(snapshot, worker_runner.boundary_audit.BoundaryAuditError):
             raise snapshot

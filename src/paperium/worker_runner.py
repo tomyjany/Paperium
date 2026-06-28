@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -24,6 +25,9 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
         if canonical_path is None:
             return _failed_result(repo, spec, "invalid_canonical_result_path")
 
+    if _has_symlink_component(repo, worker_dir):
+        return _failed_result(repo, spec, "boundary_audit_failed")
+
     worker_dir.mkdir(parents=True, exist_ok=True)
 
     stdout_path = worker_dir / "stdout.txt"
@@ -34,7 +38,7 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     context_dir = repo / ".paperium" / "context-requests"
     baseline_requests = _request_snapshot(context_dir)
     try:
-        before_paths, before_snapshot = _boundary_snapshot(repo)
+        before_paths, before_snapshot = _boundary_snapshot(repo, spec)
     except boundary_audit.BoundaryAuditError:
         return _failed_result(repo, spec, "boundary_audit_failed")
 
@@ -64,10 +68,8 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
         stderr = _prefer_final_output(final_stderr, exc.stderr)
 
     ended_at = _utc_now()
-    stdout_path.write_text(_text(stdout), encoding="utf-8")
-    stderr_path.write_text(_text(stderr), encoding="utf-8")
     try:
-        after_paths, after_snapshot = _boundary_snapshot(repo)
+        after_paths, after_snapshot = _boundary_snapshot(repo, spec)
     except boundary_audit.BoundaryAuditError:
         return _failed_result(repo, spec, "boundary_audit_failed")
     changed_paths = list(dict.fromkeys([*before_paths, *after_paths]))
@@ -80,6 +82,11 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
         before_snapshot=before_snapshot,
         after_snapshot=after_snapshot,
     )
+    try:
+        _write_managed_output(repo, stdout_path, _text(stdout))
+        _write_managed_output(repo, stderr_path, _text(stderr))
+    except boundary_audit.BoundaryAuditError:
+        return _failed_result(repo, spec, "boundary_audit_failed")
 
     context_request_state = _context_request_state(
         context_dir, baseline_requests, spec.worker_id
@@ -141,14 +148,62 @@ def _safe_worker_dir(repo: Path, worker_id: str) -> Path | None:
     return worker_dir
 
 
-def _boundary_snapshot(repo: Path) -> tuple[list[str], boundary_audit.Snapshot]:
+def _boundary_snapshot(
+    repo: Path, spec: WorkerSpec
+) -> tuple[list[str], boundary_audit.Snapshot]:
     changed_paths = boundary_audit.changed_paths_from_porcelain(
         boundary_audit.git_status_porcelain(repo)
     )
     snapshot = boundary_audit.snapshot_changed_paths(repo, changed_paths)
-    generated_snapshot = boundary_audit.snapshot_generated_paths(repo)
+    generated_snapshot = boundary_audit.snapshot_generated_paths(
+        repo, generated_roots=_auditable_generated_roots(spec)
+    )
     snapshot.update(generated_snapshot)
     return changed_paths, snapshot
+
+
+def _auditable_generated_roots(spec: WorkerSpec) -> list[str]:
+    roots = []
+    for writable_path in spec.writable_paths:
+        path = Path(writable_path)
+        if path.name == ".paperium" or ".paperium" in path.parts:
+            roots.append(path.as_posix())
+    if spec.canonical_result_path is not None:
+        canonical_parent = Path(spec.canonical_result_path).parent
+        if canonical_parent.name == ".paperium" or ".paperium" in canonical_parent.parts:
+            roots.append(canonical_parent.as_posix())
+    return list(dict.fromkeys(roots))
+
+
+def _write_managed_output(repo: Path, path: Path, text: str) -> None:
+    _validate_managed_output_path(repo, path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o666)
+    except OSError as exc:
+        raise boundary_audit.BoundaryAuditError("managed output write failed") from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        output.write(text)
+
+
+def _validate_managed_output_path(repo: Path, path: Path) -> None:
+    resolved_repo = repo.resolve(strict=False)
+    if not _is_relative_to(path.resolve(strict=False), resolved_repo):
+        raise boundary_audit.BoundaryAuditError("managed output path escapes repository")
+    if _has_symlink_component(repo, path.parent):
+        raise boundary_audit.BoundaryAuditError("managed output parent is a symlink")
+
+
+def _has_symlink_component(repo: Path, path: Path) -> bool:
+    relative = path.relative_to(repo)
+    current = repo
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _safe_repo_relative_path(repo: Path, repo_relative_path: str) -> Path | None:
