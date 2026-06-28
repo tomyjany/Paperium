@@ -110,6 +110,25 @@ def test_analysis_prompt_defines_context_request_file_protocol():
     assert "request files, not prose in output.md" in prompt
 
 
+def test_analysis_prompt_uses_full_nested_worker_id_in_context_requests():
+    prompt = build_analysis_prompt(
+        experiment_path="questions/q001/experiments/exp001",
+        question_readme="questions/q001/README.md",
+        readable_paths=[
+            "questions/q001/experiments/exp001",
+            "questions/q001/README.md",
+        ],
+        writable_paths=[
+            ".paperium/context-requests",
+            ".paperium/workers/group/w1",
+            "questions/q001/experiments/exp001/.paperium",
+        ],
+        analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+        output_path=".paperium/workers/group/w1/output.md",
+    )
+    assert '"worker_id": "group/w1"' in prompt
+
+
 def test_fact_check_prompt_defines_context_request_file_protocol():
     prompt = build_fact_check_prompt(
         analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",

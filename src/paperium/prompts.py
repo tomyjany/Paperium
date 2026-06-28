@@ -135,7 +135,7 @@ def _worker_id_from_output_path(output_path: str) -> str:
             and parts[index + 1] == "workers"
             and parts[-1] == "output.md"
         ):
-            return parts[index + 2]
+            return PurePosixPath(*parts[index + 2 : -1]).as_posix()
     return "<worker-id>"
 
 
