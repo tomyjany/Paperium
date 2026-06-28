@@ -819,6 +819,47 @@ def test_analyze_ingests_context_request_from_worker(tmp_path, monkeypatch):
     assert updated.context_requests[0].status == "pending"
 
 
+def test_analyze_ignores_stale_malformed_context_request_from_other_worker(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    exp_path = "questions/q001/experiments/exp001"
+    exp = repo / exp_path
+    outputs = exp / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "metrics.json").write_text("{}\n", encoding="utf-8")
+    stale_dir = repo / ".paperium" / "context-requests"
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "old.json").write_text("{not json", encoding="utf-8")
+    assert main(["--repo", str(repo), "init"]) == 0
+    assert main(["--repo", str(repo), "select", exp_path]) == 0
+
+    def fake_runner(selected_repo, spec):
+        request_dir = selected_repo / ".paperium" / "context-requests"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        (request_dir / "req1.json").write_text(
+            json.dumps(
+                {
+                    "id": "req1",
+                    "worker_id": spec.worker_id,
+                    "requested_paths": ["questions/q001/src"],
+                    "reason": "Need parser",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "worker_id": spec.worker_id,
+            "status": "needs_context",
+            "failure_reason": None,
+        }
+
+    monkeypatch.setattr(paperium.analyze, "run_worker", fake_runner)
+
+    assert main(["--repo", str(repo), "analyze"]) == 0
+
+    updated = load_state(repo / ".paperium" / "state.json")
+    assert [request.id for request in updated.context_requests] == ["req1"]
+
+
 def test_denied_context_decision_leaves_experiment_needing_human_review(tmp_path):
     repo = tmp_path / "repo"
     exp_path = "questions/q001/experiments/exp001"

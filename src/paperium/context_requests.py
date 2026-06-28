@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 WINDOWS_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class ContextRequestError(Exception):
@@ -33,7 +34,7 @@ def read_context_request(path: str | Path) -> ContextRequest:
 
     try:
         request = ContextRequest(
-            id=_required_string(data, "id"),
+            id=_validated_request_id(data["id"]),
             worker_id=_required_string(data, "worker_id"),
             requested_paths=_validated_requested_paths(data["requested_paths"]),
             reason=_required_string(data, "reason"),
@@ -49,7 +50,7 @@ def write_context_request(path: str | Path, request: ContextRequest) -> None:
     destination.write_text(
         _sorted_json(
             {
-                "id": request.id,
+                "id": _validated_request_id(request.id),
                 "reason": request.reason,
                 "requested_paths": _validated_requested_paths(request.requested_paths),
                 "worker_id": request.worker_id,
@@ -104,6 +105,14 @@ def _required_string(data: dict[str, Any], field: str) -> str:
     value = data[field]
     if not isinstance(value, str) or value == "":
         raise ContextRequestError(f"{field} must be a non-empty string")
+    return value
+
+
+def _validated_request_id(value: Any) -> str:
+    if not isinstance(value, str) or value == "":
+        raise ContextRequestError("id must be a non-empty safe identifier")
+    if not REQUEST_ID_PATTERN.fullmatch(value):
+        raise ContextRequestError("id must be a non-empty safe identifier")
     return value
 
 

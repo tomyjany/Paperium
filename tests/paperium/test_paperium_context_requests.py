@@ -40,17 +40,13 @@ def test_context_request_round_trip(tmp_path):
 
 def test_apply_approved_context_decision_adds_expansion():
     worker = {"approved_expansions": []}
-    updated = apply_context_decision(
-        worker, requested_paths=["questions/q001/src"], approved=True
-    )
+    updated = apply_context_decision(worker, requested_paths=["questions/q001/src"], approved=True)
     assert updated["approved_expansions"] == ["questions/q001/src"]
 
 
 def test_apply_denied_context_decision_records_denial_without_expansion():
     worker = {"approved_expansions": [], "denied_expansions": []}
-    updated = apply_context_decision(
-        worker, requested_paths=["questions/q001/src"], approved=False
-    )
+    updated = apply_context_decision(worker, requested_paths=["questions/q001/src"], approved=False)
     assert updated["approved_expansions"] == []
     assert updated["denied_expansions"] == ["questions/q001/src"]
 
@@ -79,3 +75,22 @@ def test_context_request_rejects_unsafe_requested_paths(tmp_path):
         )
         with pytest.raises(ContextRequestError):
             read_context_request(path)
+
+
+def test_context_request_rejects_unsafe_request_id(tmp_path):
+    path = tmp_path / ".paperium/context-requests/unsafe-id.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "id": "../x",
+                "worker_id": "worker1",
+                "requested_paths": ["questions/q001/src"],
+                "reason": "Need source",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContextRequestError, match="id"):
+        read_context_request(path)

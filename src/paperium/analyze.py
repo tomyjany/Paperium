@@ -266,6 +266,14 @@ def _ingest_context_request(repo: Path, state: PaperiumState, worker_id: str) ->
         if request_path.name.endswith(".decision.json"):
             continue
         try:
+            raw_text = request_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise AnalyzeError(f"invalid_context_request: {exc}") from exc
+        except OSError:
+            continue
+        if worker_id not in raw_text:
+            continue
+        try:
             request = read_context_request(request_path)
         except Exception as exc:
             raise AnalyzeError(f"invalid_context_request: {exc}") from exc
