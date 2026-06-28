@@ -188,7 +188,10 @@ def _is_run_produced_artifact(path: Path, experiment: Path) -> bool:
 
 
 def _is_excluded_artifact_path(path: Path, experiment: Path) -> bool:
-    path_parts = {part.lower() for part in path.resolve().relative_to(experiment).parts}
+    resolved_path = path.resolve()
+    if not _is_relative_to(resolved_path, experiment):
+        return True
+    path_parts = {part.lower() for part in resolved_path.relative_to(experiment).parts}
     if path_parts & EXCLUDED_ARTIFACT_DIR_NAMES:
         return True
 

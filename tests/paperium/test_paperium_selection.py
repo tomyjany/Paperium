@@ -134,6 +134,25 @@ def test_excluded_files_under_outputs_are_not_usable_run_artifacts(tmp_path):
     assert has_usable_run_artifact(exp)
 
 
+def test_symlinked_output_artifact_escape_is_not_usable_run_artifact(tmp_path):
+    exp = tmp_path / "exp"
+    outputs = exp / "outputs"
+    outputs.mkdir(parents=True)
+    outside_artifact = tmp_path / "outside-metrics.json"
+    outside_artifact.write_text("{}\n")
+    symlink = outputs / "metrics.json"
+    try:
+        symlink.symlink_to(outside_artifact)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlink creation unsupported: {exc}")
+
+    assert not has_usable_run_artifact(exp)
+
+    symlink.unlink()
+    (outputs / "metrics.json").write_text("{}\n")
+    assert has_usable_run_artifact(exp)
+
+
 def test_helper_tree_artifact_directories_are_not_usable_run_artifacts(tmp_path):
     exp = tmp_path / "exp"
     source_metrics = exp / "src/metrics"
