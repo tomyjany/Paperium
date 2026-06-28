@@ -1,7 +1,17 @@
 import json
 
+import paperium.selection
 from paperium.cli import main
 from paperium.state import PaperiumState, SelectedExperiment, WorkerRecord, load_state, save_state
+
+
+def create_selectable_experiment(repo, relative_path, *, with_question_readme=True):
+    experiment = repo / relative_path
+    experiment.mkdir(parents=True)
+    if with_question_readme:
+        (experiment.parents[1] / "README.md").write_text("# Question\n", encoding="utf-8")
+    (experiment / "metrics.jsonl").write_text('{"pages": 10}\n', encoding="utf-8")
+    return experiment
 
 
 def test_help_returns_success(capsys):
@@ -21,10 +31,146 @@ def test_unknown_option_returns_invalid_invocation(capsys):
 
 
 def test_unimplemented_command_reports_error_on_stderr(capsys):
-    assert main(["select"]) == 4
+    assert main(["analyze"]) == 4
     captured = capsys.readouterr()
-    assert "command not implemented yet: select" in captured.err
-    assert "command not implemented yet: select" not in captured.out
+    assert "command not implemented yet: analyze" in captured.err
+    assert "command not implemented yet: analyze" not in captured.out
+
+
+def test_select_manual_paths_records_experiments(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    create_selectable_experiment(repo, "questions/q001/experiments/exp001")
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+
+    assert main(["--repo", str(repo), "select", "questions/q001/experiments/exp001"]) == 0
+
+    state = load_state(repo / ".paperium" / "state.json")
+    assert state.phase == "analyzing"
+    assert state.selected_experiments == [
+        SelectedExperiment(
+            path="questions/q001/experiments/exp001",
+            question_readme="questions/q001/README.md",
+            analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+            fact_check_result_path="questions/q001/experiments/exp001/.paperium/fact-check.json",
+            disposition=None,
+        )
+    ]
+    captured = capsys.readouterr()
+    assert "Selected experiments: 1" in captured.out
+    assert captured.err == ""
+
+
+def test_select_interactive_menu_records_chosen_experiment(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    experiment = create_selectable_experiment(repo, "questions/q001/experiments/exp001")
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+    monkeypatch.setattr("paperium.cli.stdin_is_tty", lambda: True)
+    monkeypatch.setattr("paperium.cli.stdout_is_tty", lambda: True)
+    monkeypatch.setattr(
+        paperium.selection,
+        "choose_experiments_menu",
+        lambda selected_repo: [experiment] if selected_repo == repo.resolve() else [],
+    )
+
+    assert main(["--repo", str(repo), "select", "--experiments-menu"]) == 0
+
+    state = load_state(repo / ".paperium" / "state.json")
+    assert state.phase == "analyzing"
+    assert state.selected_experiments[0].path == "questions/q001/experiments/exp001"
+    assert state.selected_experiments[0].question_readme == "questions/q001/README.md"
+    assert "Selected experiments: 1" in capsys.readouterr().out
+
+
+def test_select_menu_rejects_non_interactive(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+    monkeypatch.setattr("paperium.cli.stdin_is_tty", lambda: False)
+    monkeypatch.setattr("paperium.cli.stdout_is_tty", lambda: True)
+
+    assert main(["--repo", str(repo), "select", "--experiments-menu"]) == 4
+
+    captured = capsys.readouterr()
+    assert "interactive" in captured.err
+    assert captured.out == ""
+
+
+def test_select_manual_and_menu_are_mutually_exclusive(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    create_selectable_experiment(repo, "questions/q001/experiments/exp001")
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+
+    assert (
+        main(
+            [
+                "--repo",
+                str(repo),
+                "select",
+                "questions/q001/experiments/exp001",
+                "--experiments-menu",
+            ]
+        )
+        == 4
+    )
+
+    captured = capsys.readouterr()
+    assert "not allowed with argument" in captured.err
+
+
+def test_select_rejects_missing_state(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    create_selectable_experiment(repo, "questions/q001/experiments/exp001")
+
+    assert main(["--repo", str(repo), "select", "questions/q001/experiments/exp001"]) == 2
+
+    captured = capsys.readouterr()
+    assert "state" in captured.err
+    assert "missing" in captured.err
+    assert captured.out == ""
+
+
+def test_select_rejects_invalid_experiment_path(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+
+    assert main(["--repo", str(repo), "select", "missing"]) == 2
+
+    captured = capsys.readouterr()
+    assert "Experiment path does not exist" in captured.err
+    assert captured.out == ""
+
+
+def test_select_replaces_previous_selection(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    create_selectable_experiment(repo, "questions/q001/experiments/exp001")
+    create_selectable_experiment(repo, "questions/q001/experiments/exp002")
+    save_state(
+        repo / ".paperium" / "state.json",
+        PaperiumState(
+            selected_experiments=[
+                SelectedExperiment(
+                    path="questions/q001/experiments/exp001",
+                    question_readme="questions/q001/README.md",
+                    analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+                    fact_check_result_path=(
+                        "questions/q001/experiments/exp001/.paperium/fact-check.json"
+                    ),
+                    disposition="included",
+                    status="approved",
+                )
+            ],
+        ),
+    )
+
+    assert main(["--repo", str(repo), "select", "questions/q001/experiments/exp002"]) == 0
+
+    state = load_state(repo / ".paperium" / "state.json")
+    assert [experiment.path for experiment in state.selected_experiments] == [
+        "questions/q001/experiments/exp002"
+    ]
+    assert state.selected_experiments[0].status == "pending"
+    assert state.selected_experiments[0].disposition is None
+    assert "Selected experiments: 1" in capsys.readouterr().out
 
 
 def test_command_surface_lists_v1_commands(capsys):

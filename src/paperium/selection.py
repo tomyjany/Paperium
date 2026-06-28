@@ -96,6 +96,31 @@ def discover_menu_experiments(repo: Path) -> list[Path]:
     )
 
 
+def choose_experiments_menu(repo: Path) -> list[Path]:
+    repo = repo.resolve()
+    try:
+        import questionary
+    except ImportError as exc:
+        raise SelectionError(
+            "Interactive experiment selection requires the questionary package"
+        ) from exc
+
+    experiments = discover_menu_experiments(repo)
+    if not experiments:
+        raise SelectionError("No experiments were found for interactive selection")
+
+    choices_by_label = {
+        experiment.relative_to(repo).as_posix(): experiment for experiment in experiments
+    }
+    selected_labels = questionary.checkbox(
+        "Select experiments",
+        choices=list(choices_by_label),
+    ).ask()
+    if not selected_labels:
+        raise SelectionError("No experiments selected")
+    return [choices_by_label[label] for label in selected_labels]
+
+
 def has_usable_run_artifact(experiment: Path) -> bool:
     return _has_artifact_in_named_dir(experiment) or _has_root_artifact(experiment)
 
@@ -152,9 +177,7 @@ def _matches_experiment_contract(experiment: Path) -> bool:
     if any((experiment / name).exists() for name in CONTRACT_FILE_NAMES):
         return True
     return any(
-        path.is_file()
-        and path.name in RUNNER_SCRIPT_NAMES
-        and os.access(path, os.X_OK)
+        path.is_file() and path.name in RUNNER_SCRIPT_NAMES and os.access(path, os.X_OK)
         for path in experiment.iterdir()
     )
 
@@ -175,8 +198,7 @@ def _has_root_artifact(experiment: Path) -> bool:
         return False
     experiment = experiment.resolve()
     return any(
-        _is_run_produced_artifact(path, experiment)
-        and _matches_root_artifact_name(path.name)
+        _is_run_produced_artifact(path, experiment) and _matches_root_artifact_name(path.name)
         for path in experiment.iterdir()
     )
 
