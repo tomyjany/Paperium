@@ -86,6 +86,88 @@ def test_fact_check_prompt_defines_result_json_shape():
         assert text in prompt
 
 
+def test_analysis_prompt_defines_context_request_file_protocol():
+    prompt = build_analysis_prompt(
+        experiment_path="questions/q001/experiments/exp001",
+        question_readme="questions/q001/README.md",
+        readable_paths=[
+            "questions/q001/experiments/exp001",
+            "questions/q001/README.md",
+        ],
+        writable_paths=[
+            ".paperium/context-requests",
+            ".paperium/workers/analyze-exp001",
+            "questions/q001/experiments/exp001/.paperium",
+        ],
+        analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+        output_path=".paperium/workers/analyze-exp001/output.md",
+    )
+    assert ".paperium/context-requests/<request-id>.json" in prompt
+    assert '"id": "<request-id>"' in prompt
+    assert '"worker_id": "analyze-exp001"' in prompt
+    assert '"requested_paths": ["repository-relative/path"]' in prompt
+    assert '"reason": "why this context is needed"' in prompt
+    assert "request files, not prose in output.md" in prompt
+
+
+def test_fact_check_prompt_defines_context_request_file_protocol():
+    prompt = build_fact_check_prompt(
+        analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+        experiment_path="questions/q001/experiments/exp001",
+        readable_paths=["questions/q001/experiments/exp001"],
+        writable_paths=[
+            ".paperium/context-requests",
+            ".paperium/workers/fact-check-exp001",
+            "questions/q001/experiments/exp001/.paperium",
+        ],
+        result_json_path=".paperium/workers/fact-check-exp001/result.json",
+        output_path=".paperium/workers/fact-check-exp001/output.md",
+    )
+    assert ".paperium/context-requests/<request-id>.json" in prompt
+    assert '"id": "<request-id>"' in prompt
+    assert '"worker_id": "fact-check-exp001"' in prompt
+    assert '"requested_paths": ["repository-relative/path"]' in prompt
+    assert '"reason": "why this context is needed"' in prompt
+    assert "request files, not prose in output.md" in prompt
+
+
+def test_context_request_protocol_handles_missing_writable_context_request_path():
+    prompt = build_analysis_prompt(
+        experiment_path="questions/q001/experiments/exp001",
+        question_readme="questions/q001/README.md",
+        readable_paths=[
+            "questions/q001/experiments/exp001",
+            "questions/q001/README.md",
+        ],
+        writable_paths=[
+            ".paperium/workers/analyze-exp001",
+            "questions/q001/experiments/exp001/.paperium",
+        ],
+        analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+        output_path=".paperium/workers/analyze-exp001/output.md",
+    )
+    assert "Do not write context request files unless .paperium/context-requests is listed in Writable paths" in prompt
+    assert "explain the missing context in output.md" in prompt
+
+
+def test_fact_check_prompt_defines_current_result_schema_literals():
+    prompt = build_fact_check_prompt(
+        analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+        experiment_path="questions/q001/experiments/exp001",
+        readable_paths=["questions/q001/experiments/exp001"],
+        writable_paths=[
+            ".paperium/workers/fact-check-exp001",
+            "questions/q001/experiments/exp001/.paperium",
+        ],
+        result_json_path=".paperium/workers/fact-check-exp001/result.json",
+        output_path=".paperium/workers/fact-check-exp001/output.md",
+    )
+    assert '"status": "passed|failed"' in prompt
+    assert '"severity": "error|warning"' in prompt
+    assert "passed|failed|needs_context" not in prompt
+    assert "critical|major|minor" not in prompt
+
+
 def test_worker_prompts_include_exact_write_targets():
     analysis_prompt = build_analysis_prompt(
         experiment_path="questions/q001/experiments/exp001",

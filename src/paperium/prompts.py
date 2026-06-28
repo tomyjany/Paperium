@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 
 def build_analysis_prompt(
     experiment_path: str,
@@ -9,6 +11,7 @@ def build_analysis_prompt(
     analysis_path: str,
     output_path: str,
 ) -> str:
+    context_request_protocol = _context_request_protocol(output_path, writable_paths)
     question_context = (
         f"Parent question README: {question_readme}"
         if question_readme is not None
@@ -40,8 +43,8 @@ Write targets:
 
 Context request protocol:
 - If required evidence is outside readable_paths, do not read it directly.
-- Write a context request naming the required repository-relative paths and why they are needed.
 - Only use additional paths after they appear in approved_expansions.
+{context_request_protocol}
 
 Analysis guidance:
 - Write free-form analysis.md for a human reviewer.
@@ -59,6 +62,7 @@ def build_fact_check_prompt(
     result_json_path: str,
     output_path: str,
 ) -> str:
+    context_request_protocol = _context_request_protocol(output_path, writable_paths)
     return f"""\
 You are a fact-check worker for one selected experiment analysis.
 
@@ -84,15 +88,15 @@ Write targets:
 
 Context request protocol:
 - If required evidence is outside readable_paths, do not read it directly.
-- Write a context request naming the required repository-relative paths and why they are needed.
 - Only use additional paths after they appear in approved_expansions.
+{context_request_protocol}
 
 Return result.json with this JSON shape:
 {{
-  "status": "passed|failed|needs_context",
+  "status": "passed|failed",
   "findings": [
     {{
-      "severity": "critical|major|minor",
+      "severity": "error|warning",
       "claim": "claim text",
       "reason": "why the claim passed or failed",
       "artifact_path": "repository-relative path",
@@ -101,6 +105,42 @@ Return result.json with this JSON shape:
   ]
 }}
 """
+
+
+def _context_request_protocol(output_path: str, writable_paths: list[str]) -> str:
+    worker_id = _worker_id_from_output_path(output_path)
+    if _has_context_request_writable_path(writable_paths):
+        return f"""\
+- Context requests are request files, not prose in output.md.
+- Write .paperium/context-requests/<request-id>.json with this exact JSON shape:
+  {{
+    "id": "<request-id>",
+    "worker_id": "{worker_id}",
+    "requested_paths": ["repository-relative/path"],
+    "reason": "why this context is needed"
+  }}
+- The runner only detects requests whose worker_id matches this worker."""
+
+    return """\
+- Do not write context request files unless .paperium/context-requests is listed in Writable paths.
+- If required evidence is unavailable and that writable path is missing, explain the missing context in output.md."""
+
+
+def _worker_id_from_output_path(output_path: str) -> str:
+    path = PurePosixPath(output_path)
+    parts = path.parts
+    for index in range(len(parts) - 3):
+        if (
+            parts[index] == ".paperium"
+            and parts[index + 1] == "workers"
+            and parts[-1] == "output.md"
+        ):
+            return parts[index + 2]
+    return "<worker-id>"
+
+
+def _has_context_request_writable_path(writable_paths: list[str]) -> bool:
+    return any(PurePosixPath(path).as_posix() == ".paperium/context-requests" for path in writable_paths)
 
 
 def _format_paths(paths: list[str]) -> str:
