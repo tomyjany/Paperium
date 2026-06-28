@@ -17,9 +17,7 @@ class RankingError(Exception):
     pass
 
 
-def validate_ranking_entries(
-    approved_experiment_paths: Any, entries: Any
-) -> list[dict[str, str]]:
+def validate_ranking_entries(approved_experiment_paths: Any, entries: Any) -> list[dict[str, str]]:
     validated_entries = _validate_entry_list(entries)
     approved = _validate_approved_experiment_paths(approved_experiment_paths)
     seen: set[str] = set()
@@ -57,7 +55,9 @@ def render_ranking_markdown(entries: Any) -> str:
         )
         for entry in validated_entries:
             if entry["bucket"] == bucket:
-                lines.append(f"| {entry['experiment_path']} | {entry['reason']} |")
+                experiment = _markdown_table_cell(entry["experiment_path"])
+                reason = _markdown_table_cell(entry["reason"])
+                lines.append(f"| {experiment} | {reason} |")
 
     return "\n".join(lines) + "\n"
 
@@ -118,3 +118,7 @@ def _validate_entry(entry: Any) -> dict[str, str]:
         raise RankingError("ranking entry reason must be a non-empty string")
 
     return {"experiment_path": experiment, "bucket": bucket, "reason": reason}
+
+
+def _markdown_table_cell(value: str) -> str:
+    return " ".join(value.splitlines()).replace("|", "\\|")

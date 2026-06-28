@@ -104,6 +104,20 @@ def test_render_ranking_markdown_has_ordered_bucket_tables():
     )
 
 
+def test_render_ranking_markdown_escapes_table_cell_content():
+    entries = [
+        {
+            "experiment_path": "questions/q001/experiments/exp|001",
+            "bucket": "include",
+            "reason": "best\nverified | stable",
+        },
+    ]
+
+    markdown = render_ranking_markdown(entries)
+
+    assert "| questions/q001/experiments/exp\\|001 | best verified \\| stable |" in markdown
+
+
 def test_write_ranking_artifacts_creates_markdown_and_json(tmp_path):
     md_path = tmp_path / ".paperium/ranking.md"
     json_path = tmp_path / ".paperium/ranking.json"
@@ -113,4 +127,6 @@ def test_write_ranking_artifacts_creates_markdown_and_json(tmp_path):
 
     assert md_path.read_text() == render_ranking_markdown(entries)
     assert json.loads(json_path.read_text()) == {"entries": entries}
-    assert json_path.read_text() == json.dumps({"entries": entries}, indent=2, sort_keys=True) + "\n"
+    assert (
+        json_path.read_text() == json.dumps({"entries": entries}, indent=2, sort_keys=True) + "\n"
+    )
