@@ -13,6 +13,12 @@ FACT_CHECK_KEYS = {"status", "findings"}
 FACT_CHECK_STATUSES = {"passed", "failed"}
 FACT_CHECK_FINDING_KEYS = {"severity", "claim", "reason", "artifact_path", "selector"}
 FACT_CHECK_SEVERITIES = {"error", "warning"}
+FACT_CHECK_REASON_PREFIXES = (
+    "unsupported:",
+    "no_artifact:",
+    "contradicted:",
+    "needs_correction:",
+)
 MAX_FACT_CHECK_REPAIRS = 2
 
 
@@ -138,6 +144,7 @@ def _validate_fact_check_finding(
     reason = reason.strip()
     if reason in {"unsupported", "no_artifact", "contradicted", "needs_correction"}:
         raise FactCheckError("fact-check finding reason must be prose, not an enum")
+    _validate_fact_check_reason_prose(reason)
 
     artifact_path = finding["artifact_path"]
     selector = finding["selector"]
@@ -155,6 +162,14 @@ def _validate_fact_check_finding(
         "artifact_path": artifact_path,
         "selector": selector,
     }
+
+
+def _validate_fact_check_reason_prose(reason: str) -> None:
+    for prefix in FACT_CHECK_REASON_PREFIXES:
+        if reason.startswith(prefix) and not reason.removeprefix(prefix).strip():
+            raise FactCheckError(
+                "fact-check finding reason must include explanatory prose"
+            )
 
 
 def _validate_artifact_selector_pair(

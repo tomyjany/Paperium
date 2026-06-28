@@ -168,6 +168,40 @@ def test_load_fact_check_result_validates_finding_fields_and_selector_rules(tmp_
     assert load_fact_check_result(path).findings[0]["artifact_path"] is None
 
 
+@pytest.mark.parametrize(
+    ("reason", "artifact_path", "selector"),
+    [
+        ("unsupported:", None, None),
+        ("no_artifact:", None, None),
+        ("contradicted:", "outputs/metrics.json", "/pages_per_second"),
+        ("needs_correction:", "outputs/metrics.json", "/pages_per_second"),
+    ],
+)
+def test_load_fact_check_result_rejects_prefix_only_reasons(
+    tmp_path,
+    reason,
+    artifact_path,
+    selector,
+):
+    path = tmp_path / "fact-check.json"
+    _write_fact_check(
+        path,
+        {
+            "status": "failed",
+            "findings": [
+                _finding(
+                    reason=reason,
+                    artifact_path=artifact_path,
+                    selector=selector,
+                )
+            ],
+        },
+    )
+
+    with pytest.raises(FactCheckError):
+        load_fact_check_result(path)
+
+
 def test_load_fact_check_result_rejects_unsafe_artifact_paths_selectors_and_unallowed_artifacts(
     tmp_path,
 ):
