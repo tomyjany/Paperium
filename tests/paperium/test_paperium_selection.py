@@ -98,9 +98,7 @@ def test_empty_outputs_is_selectable_but_not_claimable(tmp_path):
     repo = tmp_path / "repo"
     exp = repo / "questions/q001/experiments/exp001"
     (exp / "outputs").mkdir(parents=True)
-    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [
-        exp
-    ]
+    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [exp]
     assert not has_usable_run_artifact(exp)
 
 
@@ -179,6 +177,18 @@ def test_resolves_parent_question_readme(tmp_path):
     assert resolve_question_readme(repo, exp) == q / "README.md"
 
 
+def test_resolve_question_readme_ignores_experiments_directory_readme(tmp_path):
+    repo = tmp_path / "repo"
+    q = repo / "questions/q001"
+    experiments = q / "experiments"
+    exp = experiments / "exp001"
+    exp.mkdir(parents=True)
+    (q / "README.md").write_text("# Question\n")
+    (experiments / "README.md").write_text("# Experiments index\n")
+
+    assert resolve_question_readme(repo, exp) == q / "README.md"
+
+
 def test_missing_question_readme_returns_none(tmp_path):
     repo = tmp_path / "repo"
     exp = repo / "questions/q001/experiments/exp001"
@@ -207,9 +217,7 @@ def test_validate_manual_experiments_accepts_valid_output_experiment(tmp_path):
     outputs = exp / "outputs"
     outputs.mkdir(parents=True)
     (outputs / "metrics.jsonl").write_text('{"pages": 10}\n')
-    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [
-        exp
-    ]
+    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [exp]
 
 
 def test_validate_manual_experiments_accepts_root_level_run_artifact(tmp_path):
@@ -217,9 +225,7 @@ def test_validate_manual_experiments_accepts_root_level_run_artifact(tmp_path):
     exp = repo / "questions/q001/experiments/exp001"
     exp.mkdir(parents=True)
     (exp / "metrics.jsonl").write_text('{"pages": 10}\n')
-    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [
-        exp
-    ]
+    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [exp]
 
 
 def test_validate_manual_experiments_rejects_empty_directory(tmp_path):
@@ -237,9 +243,7 @@ def test_executable_runner_script_satisfies_experiment_contract(tmp_path):
     runner = exp / "runner.sh"
     runner.write_text("#!/usr/bin/env bash\n")
     runner.chmod(0o755)
-    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [
-        exp
-    ]
+    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [exp]
 
 
 def test_readme_only_experiment_is_selectable_but_not_claimable(tmp_path):
@@ -247,9 +251,7 @@ def test_readme_only_experiment_is_selectable_but_not_claimable(tmp_path):
     exp = repo / "questions/q001/experiments/exp001"
     exp.mkdir(parents=True)
     (exp / "README.md").write_text("# Run plan\n")
-    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [
-        exp
-    ]
+    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [exp]
     assert not has_usable_run_artifact(exp)
 
 
@@ -263,7 +265,5 @@ def test_metadata_compose_and_pyproject_contracts_are_selectable(tmp_path):
         exp = repo / f"questions/q001/experiments/{name}"
         exp.mkdir(parents=True)
         (exp / file_name).write_text("{}\n")
-        assert validate_manual_experiments(
-            repo, [f"questions/q001/experiments/{name}"]
-        ) == [exp]
+        assert validate_manual_experiments(repo, [f"questions/q001/experiments/{name}"]) == [exp]
         assert not has_usable_run_artifact(exp)

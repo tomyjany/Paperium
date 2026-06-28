@@ -131,7 +131,7 @@ def resolve_question_readme(repo: Path, experiment: Path) -> Path | None:
     current = experiment.resolve().parent
 
     while current != current.parent:
-        if _is_relative_to(current, questions_dir):
+        if current.name != "experiments" and _is_relative_to(current, questions_dir):
             readme = current / "README.md"
             if readme.is_file():
                 return readme
