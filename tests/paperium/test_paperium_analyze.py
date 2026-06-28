@@ -117,6 +117,14 @@ def test_load_fact_check_result_requires_status_and_findings(tmp_path):
         load_fact_check_result(path)
 
 
+def test_load_fact_check_result_wraps_invalid_utf8_as_fact_check_error(tmp_path):
+    path = tmp_path / "fact-check.json"
+    path.write_bytes(b'{"status": "passed", "findings": []}\xff')
+
+    with pytest.raises(FactCheckError):
+        load_fact_check_result(path)
+
+
 def test_load_fact_check_result_validates_finding_fields_and_selector_rules(tmp_path):
     path = tmp_path / "fact-check.json"
     _write_fact_check(path, {"status": "failed", "findings": [_finding()]})
@@ -166,6 +174,27 @@ def test_load_fact_check_result_validates_finding_fields_and_selector_rules(tmp_
         },
     )
     assert load_fact_check_result(path).findings[0]["artifact_path"] is None
+
+
+@pytest.mark.parametrize("selector", ["lines ", "csv:"])
+def test_load_fact_check_result_rejects_empty_selector_payloads(tmp_path, selector):
+    path = tmp_path / "fact-check.json"
+    _write_fact_check(
+        path,
+        {
+            "status": "failed",
+            "findings": [
+                _finding(
+                    reason="contradicted: metrics disagree",
+                    artifact_path="outputs/metrics.json",
+                    selector=selector,
+                )
+            ],
+        },
+    )
+
+    with pytest.raises(FactCheckError):
+        load_fact_check_result(path)
 
 
 def test_load_fact_check_result_rejects_passed_result_with_findings(tmp_path):

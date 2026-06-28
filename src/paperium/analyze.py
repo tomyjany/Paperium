@@ -69,6 +69,8 @@ def load_fact_check_result(
 ) -> FactCheckResult:
     try:
         data = json.loads(path.read_text())
+    except UnicodeDecodeError as exc:
+        raise FactCheckError("invalid fact-check file encoding: expected UTF-8") from exc
     except json.JSONDecodeError as exc:
         raise FactCheckError(f"invalid fact-check JSON: {exc.msg}") from exc
 
@@ -222,12 +224,15 @@ def _validate_artifact_path(
 def _validate_selector(selector: Any) -> None:
     if not isinstance(selector, str) or not selector:
         raise FactCheckError("selector must be a non-empty string")
-    if not (
-        selector.startswith("/")
-        or selector.startswith("lines ")
-        or selector.startswith("csv:")
-    ):
+    if selector.startswith("/"):
+        return
+    if selector.startswith("lines ") and selector.removeprefix("lines ").strip():
+        return
+    if selector.startswith("csv:") and selector.removeprefix("csv:").strip():
+        return
+    if not (selector.startswith("lines ") or selector.startswith("csv:")):
         raise FactCheckError(f"invalid selector: {selector}")
+    raise FactCheckError("selector must include a non-empty payload")
 
 
 def _repo_relative_posix(repo: Path, path: Path) -> str:
