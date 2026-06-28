@@ -52,10 +52,18 @@ CONTRACT_DIR_NAMES = {
 }
 
 EXCLUDED_ARTIFACT_DIR_NAMES = {
+    ".paperium",
     ".venv",
-    "venv",
     "__pycache__",
+    "config",
+    "configs",
+    "fixtures",
     "node_modules",
+    "scripts",
+    "src",
+    "test",
+    "tests",
+    "venv",
 }
 
 EXCLUDED_ARTIFACT_FILE_NAMES = {
@@ -79,10 +87,12 @@ EXCLUDED_ARTIFACT_SUFFIXES = {
 
 
 def discover_menu_experiments(repo: Path) -> list[Path]:
+    repo = repo.resolve()
     return sorted(
-        path
-        for path in repo.glob("questions/**/experiments/*")
-        if path.is_dir()
+        child
+        for experiments_dir in _question_owned_experiments_dirs(repo)
+        for child in experiments_dir.iterdir()
+        if child.is_dir() and _is_relative_to(child.resolve(), repo)
     )
 
 
@@ -150,11 +160,12 @@ def _matches_experiment_contract(experiment: Path) -> bool:
 
 
 def _has_artifact_in_named_dir(experiment: Path) -> bool:
+    experiment = experiment.resolve()
     for artifact_dir in experiment.rglob("*"):
         if not artifact_dir.is_dir() or artifact_dir.name not in RUN_ARTIFACT_DIR_NAMES:
             continue
         for artifact in artifact_dir.rglob("*"):
-            if _is_run_produced_artifact(artifact):
+            if _is_run_produced_artifact(artifact, experiment):
                 return True
     return False
 
@@ -162,21 +173,22 @@ def _has_artifact_in_named_dir(experiment: Path) -> bool:
 def _has_root_artifact(experiment: Path) -> bool:
     if not experiment.is_dir():
         return False
+    experiment = experiment.resolve()
     return any(
-        _is_run_produced_artifact(path)
+        _is_run_produced_artifact(path, experiment)
         and _matches_root_artifact_name(path.name)
         for path in experiment.iterdir()
     )
 
 
-def _is_run_produced_artifact(path: Path) -> bool:
+def _is_run_produced_artifact(path: Path, experiment: Path) -> bool:
     if not path.is_file() or path.stat().st_size == 0:
         return False
-    return not _is_excluded_artifact_path(path)
+    return not _is_excluded_artifact_path(path, experiment)
 
 
-def _is_excluded_artifact_path(path: Path) -> bool:
-    path_parts = {part.lower() for part in path.parts}
+def _is_excluded_artifact_path(path: Path, experiment: Path) -> bool:
+    path_parts = {part.lower() for part in path.resolve().relative_to(experiment).parts}
     if path_parts & EXCLUDED_ARTIFACT_DIR_NAMES:
         return True
 
@@ -195,6 +207,22 @@ def _matches_root_artifact_name(file_name: str) -> bool:
         return True
     stem = file_name.split(".", maxsplit=1)[0]
     return stem in RUN_ARTIFACT_PREFIXES
+
+
+def _question_owned_experiments_dirs(repo: Path) -> list[Path]:
+    questions_dir = repo / "questions"
+    if not questions_dir.is_dir():
+        return []
+    return [
+        path
+        for path in questions_dir.rglob("experiments")
+        if path.is_dir() and _is_question_owned_experiments_dir(questions_dir, path)
+    ]
+
+
+def _is_question_owned_experiments_dir(questions_dir: Path, path: Path) -> bool:
+    relative_parent = path.parent.relative_to(questions_dir)
+    return "experiments" not in relative_parent.parts
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

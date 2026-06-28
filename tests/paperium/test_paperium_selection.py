@@ -20,6 +20,30 @@ def test_discovers_question_experiments(tmp_path):
     assert discover_menu_experiments(repo) == [exp_a, exp_b]
 
 
+def test_discovery_ignores_symlink_experiment_escape(tmp_path):
+    repo = tmp_path / "repo"
+    experiments = repo / "questions/q001/experiments"
+    experiments.mkdir(parents=True)
+    outside = tmp_path / "outside-exp"
+    outside.mkdir()
+    symlink = experiments / "escape"
+    try:
+        symlink.symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlink creation unsupported: {exc}")
+
+    assert discover_menu_experiments(repo) == []
+
+
+def test_discovery_ignores_nested_helper_experiments(tmp_path):
+    repo = tmp_path / "repo"
+    exp_a = repo / "questions/q001/experiments/exp-a"
+    helper = exp_a / "src/experiments/helper"
+    helper.mkdir(parents=True)
+
+    assert discover_menu_experiments(repo) == [exp_a]
+
+
 def test_outputs_file_is_usable_run_artifact(tmp_path):
     exp = tmp_path / "exp"
     outputs = exp / "outputs"
@@ -107,6 +131,23 @@ def test_excluded_files_under_outputs_are_not_usable_run_artifacts(tmp_path):
         artifact.unlink()
 
     (outputs / "metrics.json").write_text("{}\n")
+    assert has_usable_run_artifact(exp)
+
+
+def test_helper_tree_artifact_directories_are_not_usable_run_artifacts(tmp_path):
+    exp = tmp_path / "exp"
+    source_metrics = exp / "src/metrics"
+    source_metrics.mkdir(parents=True)
+    (source_metrics / "schema.json").write_text("{}\n")
+    assert not has_usable_run_artifact(exp)
+
+    (exp / "metrics").mkdir()
+    (exp / "metrics/metrics.json").write_text("{}\n")
+    assert has_usable_run_artifact(exp)
+
+    (exp / "metrics/metrics.json").unlink()
+    (exp / "outputs").mkdir()
+    (exp / "outputs/metrics.json").write_text("{}\n")
     assert has_usable_run_artifact(exp)
 
 
