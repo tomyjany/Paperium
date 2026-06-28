@@ -333,6 +333,9 @@ def test_analyze_accepts_jobs_and_renders_progress(tmp_path, monkeypatch, capsys
 
     captured = capsys.readouterr()
     assert "PROGRESS" in captured.out
+    state = load_state(repo / ".paperium" / "state.json")
+    assert state.selected_experiments[0].status == "needs_human_review"
+    assert state.selected_experiments[0].disposition == "needs_human_review"
 
 
 def test_analyze_rejects_invalid_jobs(tmp_path, capsys):
@@ -360,6 +363,35 @@ def test_analyze_rejects_missing_state_or_empty_selection(tmp_path, capsys):
     assert main(["--repo", str(repo), "analyze"]) == 2
     captured = capsys.readouterr()
     assert "selected experiments" in captured.err
+
+
+def test_analyze_rejects_unsafe_selected_state_paths(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    save_state(
+        repo / ".paperium" / "state.json",
+        PaperiumState(
+            phase="analyzing",
+            selected_experiments=[
+                SelectedExperiment(
+                    path="../outside",
+                    question_readme=None,
+                    analysis_path="../outside/.paperium/analysis.md",
+                    fact_check_result_path="../outside/.paperium/fact-check.json",
+                    disposition=None,
+                )
+            ],
+        ),
+    )
+
+    def fail_run_worker(_repo, _spec):
+        raise AssertionError("unsafe selected paths must fail before workers run")
+
+    monkeypatch.setattr(paperium.analyze, "run_worker", fail_run_worker)
+
+    assert main(["--repo", str(repo), "analyze"]) == 2
+
+    captured = capsys.readouterr()
+    assert "unsafe selected experiment path" in captured.err
 
 
 def test_command_surface_lists_v1_commands(capsys):

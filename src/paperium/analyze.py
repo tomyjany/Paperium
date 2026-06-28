@@ -44,7 +44,8 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
     del jobs
     repo = repo.resolve()
     for selected in state.selected_experiments:
-        experiment = repo / selected.path
+        _normalize_selected_paths(selected)
+        experiment = _repo_relative_path(repo, selected.path)
         if not has_usable_run_artifact(experiment):
             selected.disposition = "artifact_missing"
             selected.status = "needs_human_review"
@@ -61,6 +62,7 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
         if analysis_result.status == "needs_context":
             return
         if analysis_result.status != "succeeded":
+            _mark_worker_failure(selected)
             raise AnalyzeError(analysis_result.failure_reason or "analysis_worker_failed")
 
         fact_check_result = _run_and_record_worker(
@@ -71,6 +73,7 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
         if fact_check_result.status == "needs_context":
             return
         if fact_check_result.status != "succeeded":
+            _mark_worker_failure(selected)
             raise AnalyzeError(fact_check_result.failure_reason or "fact_check_worker_failed")
 
         result_path = _fact_check_result_path(repo, selected, fact_check_result)
@@ -87,6 +90,7 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
 
 
 def _analysis_spec(selected: SelectedExperiment) -> WorkerSpec:
+    _normalize_selected_paths(selected)
     worker_id = worker_id_for("analyze", selected.path)
     output_path = _worker_output_path(worker_id)
     readable_paths = _readable_paths(selected)
@@ -111,6 +115,7 @@ def _analysis_spec(selected: SelectedExperiment) -> WorkerSpec:
 
 
 def _fact_check_spec(selected: SelectedExperiment) -> WorkerSpec:
+    _normalize_selected_paths(selected)
     worker_id = worker_id_for("fact_check", selected.path)
     output_path = _worker_output_path(worker_id)
     readable_paths = _readable_paths(selected, extra=[selected.analysis_path])
@@ -185,6 +190,7 @@ def _result_value(result: Any, field: str) -> Any:
 
 
 def _fact_check_result_path(repo: Path, selected: SelectedExperiment, result: WorkerResult) -> Path:
+    _normalize_selected_paths(selected)
     canonical = repo / selected.fact_check_result_path
     if canonical.exists():
         return canonical
@@ -200,6 +206,11 @@ def _update_selected_experiment(selected: SelectedExperiment, values: dict[str, 
     selected.disposition = values["disposition"]
 
 
+def _mark_worker_failure(selected: SelectedExperiment) -> None:
+    selected.status = "needs_human_review"
+    selected.disposition = "needs_human_review"
+
+
 def _analysis_complete(state: PaperiumState) -> bool:
     return bool(state.selected_experiments) and all(
         selected.status == "approved"
@@ -209,6 +220,7 @@ def _analysis_complete(state: PaperiumState) -> bool:
 
 
 def _readable_paths(selected: SelectedExperiment, extra: list[str] | None = None) -> list[str]:
+    _normalize_selected_paths(selected)
     paths = [selected.path]
     if selected.question_readme is not None:
         paths.append(selected.question_readme)
@@ -227,6 +239,40 @@ def _worker_output_path(worker_id: str) -> str:
 
 def _worker_result_path(worker_id: str) -> str:
     return f"{_worker_dir(worker_id)}/result.json"
+
+
+def _normalize_selected_paths(selected: SelectedExperiment) -> None:
+    selected.path = _validate_repo_relative_posix(
+        selected.path, field_name="selected experiment path"
+    )
+    selected.analysis_path = f"{selected.path}/.paperium/analysis.md"
+    selected.fact_check_result_path = f"{selected.path}/.paperium/fact-check.json"
+    if selected.question_readme is not None:
+        selected.question_readme = _validate_repo_relative_posix(
+            selected.question_readme, field_name="selected question README path"
+        )
+
+
+def _validate_repo_relative_posix(value: Any, *, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise AnalyzeError(f"unsafe {field_name}: {value}")
+    if value.startswith("/") or "\\" in value or re.match(r"^[A-Za-z]:", value):
+        raise AnalyzeError(f"unsafe {field_name}: {value}")
+    if any(part in {"", ".", ".."} for part in value.split("/")):
+        raise AnalyzeError(f"unsafe {field_name}: {value}")
+    return value
+
+
+def _repo_relative_path(repo: Path, repo_relative_path: str) -> Path:
+    safe_path = _validate_repo_relative_posix(
+        repo_relative_path, field_name="selected experiment path"
+    )
+    path = (repo / safe_path).resolve(strict=False)
+    try:
+        path.relative_to(repo)
+    except ValueError as exc:
+        raise AnalyzeError(f"unsafe selected experiment path: {repo_relative_path}") from exc
+    return path
 
 
 def prepare_selected_experiment(repo: Path, exp: Path) -> SelectedExperiment:
