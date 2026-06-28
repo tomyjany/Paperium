@@ -59,6 +59,9 @@ def test_context_request_rejects_unsafe_requested_paths(tmp_path):
     for requested_paths in [
         ["/etc/passwd"],
         ["../outside"],
+        ["..\\outside"],
+        ["C:\\tmp\\secret"],
+        ["questions\\q001\\src"],
         [""],
         "questions/q001/src",
     ]:

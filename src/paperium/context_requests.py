@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+WINDOWS_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 
 
 class ContextRequestError(Exception):
@@ -110,6 +113,10 @@ def _validated_requested_paths(value: Any) -> list[str]:
         raise ContextRequestError("requested_paths must be a non-empty list of strings")
 
     for requested_path in value:
+        if "\\" in requested_path or WINDOWS_DRIVE_PREFIX.match(requested_path):
+            raise ContextRequestError(
+                f"requested path must be repo-relative without traversal: {requested_path}"
+            )
         path = PurePosixPath(requested_path)
         if path.is_absolute() or ".." in path.parts:
             raise ContextRequestError(
