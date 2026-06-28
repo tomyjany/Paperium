@@ -10,7 +10,7 @@ BUCKET_ORDER = (
     ("exclude", "Exclude"),
     ("defer", "Defer"),
 )
-ENTRY_KEYS = {"experiment", "bucket", "reason"}
+ENTRY_KEYS = {"experiment_path", "bucket", "reason"}
 
 
 class RankingError(Exception):
@@ -18,14 +18,14 @@ class RankingError(Exception):
 
 
 def validate_ranking_entries(
-    approved_experiment_paths: set[str], entries: Any
+    approved_experiment_paths: Any, entries: Any
 ) -> list[dict[str, str]]:
     validated_entries = _validate_entry_list(entries)
     approved = _validate_approved_experiment_paths(approved_experiment_paths)
     seen: set[str] = set()
 
     for entry in validated_entries:
-        experiment = entry["experiment"]
+        experiment = entry["experiment_path"]
         if experiment not in approved:
             raise RankingError(f"ranking includes unapproved experiment: {experiment}")
         if experiment in seen:
@@ -57,7 +57,7 @@ def render_ranking_markdown(entries: Any) -> str:
         )
         for entry in validated_entries:
             if entry["bucket"] == bucket:
-                lines.append(f"| {entry['experiment']} | {entry['reason']} |")
+                lines.append(f"| {entry['experiment_path']} | {entry['reason']} |")
 
     return "\n".join(lines) + "\n"
 
@@ -73,11 +73,20 @@ def write_ranking_artifacts(md_path: Path, json_path: Path, entries: Any) -> Non
 
 
 def _validate_approved_experiment_paths(approved_experiment_paths: Any) -> set[str]:
-    if not isinstance(approved_experiment_paths, set) or not all(
-        isinstance(path, str) for path in approved_experiment_paths
+    if isinstance(approved_experiment_paths, str) or not isinstance(
+        approved_experiment_paths, (list, tuple, set)
     ):
-        raise RankingError("approved experiment paths must be a set of strings")
-    return approved_experiment_paths
+        raise RankingError("approved experiment paths must be a list of strings")
+
+    approved = set()
+    for path in approved_experiment_paths:
+        if not isinstance(path, str) or not path:
+            raise RankingError("approved experiment paths must be non-empty strings")
+        if path in approved:
+            raise RankingError(f"duplicate approved experiment path: {path}")
+        approved.add(path)
+
+    return approved
 
 
 def _validate_entry_list(entries: Any) -> list[dict[str, str]]:
@@ -96,9 +105,9 @@ def _validate_entry(entry: Any) -> dict[str, str]:
     if set(entry) != ENTRY_KEYS:
         raise RankingError("ranking entry has invalid fields")
 
-    experiment = entry["experiment"]
+    experiment = entry["experiment_path"]
     if not isinstance(experiment, str) or not experiment:
-        raise RankingError("ranking entry experiment must be a non-empty string")
+        raise RankingError("ranking entry experiment_path must be a non-empty string")
 
     bucket = entry["bucket"]
     if not isinstance(bucket, str) or bucket not in ALLOWED_BUCKETS:
@@ -108,4 +117,4 @@ def _validate_entry(entry: Any) -> dict[str, str]:
     if not isinstance(reason, str) or not reason.strip():
         raise RankingError("ranking entry reason must be a non-empty string")
 
-    return {"experiment": experiment, "bucket": bucket, "reason": reason}
+    return {"experiment_path": experiment, "bucket": bucket, "reason": reason}

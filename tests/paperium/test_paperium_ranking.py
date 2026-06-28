@@ -12,43 +12,43 @@ from paperium.ranking import (
 
 def test_valid_ranking_requires_every_approved_experiment_once():
     entries = [
-        {"experiment": "exp1", "bucket": "include", "reason": "best"},
-        {"experiment": "exp2", "bucket": "exclude", "reason": "weak evidence"},
-        {"experiment": "exp3", "bucket": "defer", "reason": "needs follow-up"},
+        {"experiment_path": "exp1", "bucket": "include", "reason": "best"},
+        {"experiment_path": "exp2", "bucket": "exclude", "reason": "weak evidence"},
+        {"experiment_path": "exp3", "bucket": "defer", "reason": "needs follow-up"},
     ]
 
-    assert validate_ranking_entries({"exp1", "exp2", "exp3"}, entries) == entries
+    assert validate_ranking_entries(["exp1", "exp2", "exp3"], entries) == entries
 
 
 def test_missing_approved_experiment_raises_ranking_error():
-    entries = [{"experiment": "exp1", "bucket": "include", "reason": "best"}]
+    entries = [{"experiment_path": "exp1", "bucket": "include", "reason": "best"}]
 
     with pytest.raises(RankingError):
-        validate_ranking_entries({"exp1", "exp2"}, entries)
+        validate_ranking_entries(["exp1", "exp2"], entries)
 
 
 def test_duplicate_approved_experiment_raises_ranking_error():
     entries = [
-        {"experiment": "exp1", "bucket": "include", "reason": "best"},
-        {"experiment": "exp1", "bucket": "exclude", "reason": "worse duplicate"},
+        {"experiment_path": "exp1", "bucket": "include", "reason": "best"},
+        {"experiment_path": "exp1", "bucket": "exclude", "reason": "worse duplicate"},
     ]
 
     with pytest.raises(RankingError):
-        validate_ranking_entries({"exp1"}, entries)
+        validate_ranking_entries(["exp1"], entries)
 
 
 @pytest.mark.parametrize(
     "entries",
     [
-        [{"experiment": "exp2", "bucket": "include", "reason": "unapproved"}],
-        [{"experiment": "exp1", "bucket": "maybe", "reason": "bad bucket"}],
-        [{"experiment": "exp1", "bucket": "include", "reason": ""}],
-        [{"experiment": "exp1", "bucket": "include", "reason": "   "}],
+        [{"experiment_path": "exp2", "bucket": "include", "reason": "unapproved"}],
+        [{"experiment_path": "exp1", "bucket": "maybe", "reason": "bad bucket"}],
+        [{"experiment_path": "exp1", "bucket": "include", "reason": ""}],
+        [{"experiment_path": "exp1", "bucket": "include", "reason": "   "}],
     ],
 )
 def test_invalid_ranking_entry_fields_raise_ranking_error(entries):
     with pytest.raises(RankingError):
-        validate_ranking_entries({"exp1"}, entries)
+        validate_ranking_entries(["exp1"], entries)
 
 
 @pytest.mark.parametrize(
@@ -58,23 +58,32 @@ def test_invalid_ranking_entry_fields_raise_ranking_error(entries):
         {},
         ["not an object"],
         [{"bucket": "include", "reason": "missing experiment"}],
-        [{"experiment": "exp1", "reason": "missing bucket"}],
-        [{"experiment": "exp1", "bucket": "include"}],
-        [{"experiment": 1, "bucket": "include", "reason": "bad experiment"}],
-        [{"experiment": "exp1", "bucket": 1, "reason": "bad bucket"}],
-        [{"experiment": "exp1", "bucket": "include", "reason": 1}],
+        [{"experiment": "exp1", "bucket": "include", "reason": "old key"}],
+        [{"experiment_path": "exp1", "reason": "missing bucket"}],
+        [{"experiment_path": "exp1", "bucket": "include"}],
+        [{"experiment_path": 1, "bucket": "include", "reason": "bad experiment"}],
+        [{"experiment_path": "exp1", "bucket": 1, "reason": "bad bucket"}],
+        [{"experiment_path": "exp1", "bucket": "include", "reason": 1}],
     ],
 )
 def test_malformed_ranking_entries_raise_ranking_error(entries):
     with pytest.raises(RankingError):
-        validate_ranking_entries({"exp1"}, entries)
+        validate_ranking_entries(["exp1"], entries)
+
+
+@pytest.mark.parametrize("approved", ["exp1", [1], ["exp1", ""], ["exp1", "exp1"]])
+def test_malformed_approved_experiment_paths_raise_ranking_error(approved):
+    entries = [{"experiment_path": "exp1", "bucket": "include", "reason": "best"}]
+
+    with pytest.raises(RankingError):
+        validate_ranking_entries(approved, entries)
 
 
 def test_render_ranking_markdown_has_ordered_bucket_tables():
     entries = [
-        {"experiment": "exp3", "bucket": "defer", "reason": "later"},
-        {"experiment": "exp1", "bucket": "include", "reason": "best"},
-        {"experiment": "exp2", "bucket": "exclude", "reason": "weak"},
+        {"experiment_path": "exp3", "bucket": "defer", "reason": "later"},
+        {"experiment_path": "exp1", "bucket": "include", "reason": "best"},
+        {"experiment_path": "exp2", "bucket": "exclude", "reason": "weak"},
     ]
 
     markdown = render_ranking_markdown(entries)
@@ -98,7 +107,7 @@ def test_render_ranking_markdown_has_ordered_bucket_tables():
 def test_write_ranking_artifacts_creates_markdown_and_json(tmp_path):
     md_path = tmp_path / ".paperium/ranking.md"
     json_path = tmp_path / ".paperium/ranking.json"
-    entries = [{"experiment": "exp1", "bucket": "include", "reason": "best"}]
+    entries = [{"experiment_path": "exp1", "bucket": "include", "reason": "best"}]
 
     write_ranking_artifacts(md_path, json_path, entries)
 
