@@ -2,6 +2,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import paperium.analyze
+import paperium.output
 import paperium.selection
 from paperium.gitignore import ensure_paperium_gitignore
 from paperium.output import format_status_plain
@@ -24,7 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser = subparsers.add_parser("select")
     select_parser.add_argument("experiment_paths", nargs="*")
     select_parser.add_argument("--experiments-menu", action="store_true")
-    subparsers.add_parser("analyze")
+    analyze_parser = subparsers.add_parser("analyze")
+    analyze_parser.add_argument("--jobs", type=_positive_int, default=2)
     subparsers.add_parser("rank")
     subparsers.add_parser("approve")
     subparsers.add_parser("context")
@@ -47,6 +50,16 @@ def stdin_is_tty() -> bool:
 
 def stdout_is_tty() -> bool:
     return sys.stdout.isatty()
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("jobs must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("jobs must be a positive integer")
+    return parsed
 
 
 def _run_init(repo: Path) -> int:
@@ -128,6 +141,34 @@ def _run_select(
     return SUCCESS
 
 
+def _run_analyze(repo: Path, jobs: int) -> int:
+    state_path = _state_path(repo)
+    if not state_path.exists():
+        print(f"paperium: state file missing: {state_path}", file=sys.stderr)
+        return DETERMINISTIC_FAILURE
+    try:
+        state = load_state(state_path)
+    except (OSError, StateError) as exc:
+        print(f"paperium: invalid state file {state_path}: {exc}", file=sys.stderr)
+        return DETERMINISTIC_FAILURE
+    if not state.selected_experiments:
+        print("paperium: analyze requires selected experiments in state", file=sys.stderr)
+        return DETERMINISTIC_FAILURE
+
+    paperium.output.render_progress(
+        state, f"Analyzing {len(state.selected_experiments)} experiments"
+    )
+    try:
+        paperium.analyze.analyze_selected_experiments(repo, state, jobs=jobs)
+    except paperium.analyze.AnalyzeError as exc:
+        save_state(state_path, state)
+        print(f"paperium: analyze failed: {exc}", file=sys.stderr)
+        return DETERMINISTIC_FAILURE
+
+    save_state(state_path, state)
+    return SUCCESS
+
+
 def _selected_experiment_from_path(repo: Path, experiment: Path) -> SelectedExperiment:
     paths = PaperiumPaths(repo)
     experiment = experiment.resolve()
@@ -174,5 +215,7 @@ def main(argv: list[str] | None = None) -> int:
             args.experiment_paths,
             experiments_menu=args.experiments_menu,
         )
+    if args.command == "analyze":
+        return _run_analyze(repo, jobs=args.jobs)
     print(f"{parser.prog}: command not implemented yet: {args.command}", file=sys.stderr)
     return INVALID_INVOCATION

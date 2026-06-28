@@ -56,9 +56,7 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     timed_out = False
     returncode = None
     try:
-        stdout, stderr = process.communicate(
-            input=spec.prompt, timeout=spec.timeout_seconds
-        )
+        stdout, stderr = process.communicate(input=spec.prompt, timeout=spec.timeout_seconds)
         returncode = process.returncode
     except subprocess.TimeoutExpired as exc:
         timed_out = True
@@ -73,9 +71,7 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     except boundary_audit.BoundaryAuditError:
         return _failed_result(repo, spec, "boundary_audit_failed")
     changed_paths = list(dict.fromkeys([*before_paths, *after_paths]))
-    changed_paths.extend(
-        path for path in after_snapshot if path not in changed_paths
-    )
+    changed_paths.extend(path for path in after_snapshot if path not in changed_paths)
     boundary_violations = boundary_audit.find_disallowed_writes(
         changed_paths=changed_paths,
         writable_paths=spec.writable_paths,
@@ -88,9 +84,7 @@ def run_worker(repo: Path, spec: WorkerSpec) -> WorkerResult:
     except boundary_audit.BoundaryAuditError:
         return _failed_result(repo, spec, "boundary_audit_failed")
 
-    context_request_state = _context_request_state(
-        context_dir, baseline_requests, spec.worker_id
-    )
+    context_request_state = _context_request_state(context_dir, baseline_requests, spec.worker_id)
     context_request_allowed = ".paperium/context-requests" in spec.writable_paths
 
     status = "succeeded"
@@ -148,9 +142,7 @@ def _safe_worker_dir(repo: Path, worker_id: str) -> Path | None:
     return worker_dir
 
 
-def _boundary_snapshot(
-    repo: Path, spec: WorkerSpec
-) -> tuple[list[str], boundary_audit.Snapshot]:
+def _boundary_snapshot(repo: Path, spec: WorkerSpec) -> tuple[list[str], boundary_audit.Snapshot]:
     changed_paths = boundary_audit.changed_paths_from_porcelain(
         boundary_audit.git_status_porcelain(repo)
     )

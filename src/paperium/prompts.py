@@ -140,7 +140,9 @@ def _worker_id_from_output_path(output_path: str) -> str:
 
 
 def _has_context_request_writable_path(writable_paths: list[str]) -> bool:
-    return any(PurePosixPath(path).as_posix() == ".paperium/context-requests" for path in writable_paths)
+    return any(
+        PurePosixPath(path).as_posix() == ".paperium/context-requests" for path in writable_paths
+    )
 
 
 def _format_paths(paths: list[str]) -> str:

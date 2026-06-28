@@ -37,6 +37,10 @@ def format_status_plain(state: PaperiumState) -> str:
     )
 
 
+def render_progress(state: PaperiumState, message: str) -> None:
+    print(message)
+
+
 def print_status_rich(state: PaperiumState, file: TextIO | None = None) -> None:
     output = file if file is not None else sys.stdout
     if not output.isatty():

@@ -1,8 +1,11 @@
 import json
 
+import paperium.analyze
+import paperium.output
 import paperium.selection
 from paperium.cli import main
 from paperium.state import PaperiumState, SelectedExperiment, WorkerRecord, load_state, save_state
+from paperium.workers import worker_id_for
 
 
 def create_selectable_experiment(repo, relative_path, *, with_question_readme=True):
@@ -31,10 +34,10 @@ def test_unknown_option_returns_invalid_invocation(capsys):
 
 
 def test_unimplemented_command_reports_error_on_stderr(capsys):
-    assert main(["analyze"]) == 4
+    assert main(["rank"]) == 4
     captured = capsys.readouterr()
-    assert "command not implemented yet: analyze" in captured.err
-    assert "command not implemented yet: analyze" not in captured.out
+    assert "command not implemented yet: rank" in captured.err
+    assert "command not implemented yet: rank" not in captured.out
 
 
 def test_select_manual_paths_records_experiments(tmp_path, capsys):
@@ -182,6 +185,181 @@ def test_select_replaces_previous_selection(tmp_path, capsys):
     assert state.selected_experiments[0].status == "pending"
     assert state.selected_experiments[0].disposition is None
     assert "Selected experiments: 1" in capsys.readouterr().out
+
+
+def test_analyze_marks_artifact_missing_without_worker(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    experiment = repo / "questions/q001/experiments/exp001"
+    experiment.mkdir(parents=True)
+    (experiment / "README.md").write_text("# Experiment\n", encoding="utf-8")
+    save_state(
+        repo / ".paperium" / "state.json",
+        PaperiumState(
+            phase="analyzing",
+            selected_experiments=[
+                SelectedExperiment(
+                    path="questions/q001/experiments/exp001",
+                    question_readme=None,
+                    analysis_path="questions/q001/experiments/exp001/.paperium/analysis.md",
+                    fact_check_result_path=(
+                        "questions/q001/experiments/exp001/.paperium/fact-check.json"
+                    ),
+                    disposition=None,
+                )
+            ],
+        ),
+    )
+
+    def fail_run_worker(_repo, _spec):
+        raise AssertionError("artifact-missing experiments must not run workers")
+
+    monkeypatch.setattr(paperium.analyze, "run_worker", fail_run_worker)
+
+    assert main(["--repo", str(repo), "analyze"]) == 0
+
+    state = load_state(repo / ".paperium" / "state.json")
+    assert state.selected_experiments[0].disposition == "artifact_missing"
+    assert state.selected_experiments[0].status == "needs_human_review"
+    assert state.workers == []
+    assert capsys.readouterr().err == ""
+
+
+def test_analyze_usable_experiment_with_fake_runner_approves_analysis(
+    tmp_path, monkeypatch, capsys
+):
+    repo = tmp_path / "repo"
+    experiment_path = "questions/q001/experiments/exp001"
+    experiment = repo / experiment_path
+    (experiment / "outputs").mkdir(parents=True)
+    (experiment / "outputs" / "metrics.json").write_text('{"accuracy": 1}\n', encoding="utf-8")
+    save_state(
+        repo / ".paperium" / "state.json",
+        PaperiumState(
+            phase="analyzing",
+            selected_experiments=[
+                SelectedExperiment(
+                    path=experiment_path,
+                    question_readme=None,
+                    analysis_path=f"{experiment_path}/.paperium/analysis.md",
+                    fact_check_result_path=f"{experiment_path}/.paperium/fact-check.json",
+                    disposition=None,
+                )
+            ],
+        ),
+    )
+
+    def fake_run_worker(selected_repo, spec):
+        assert selected_repo == repo.resolve()
+        if spec.role == "analyze":
+            analysis_path = selected_repo / spec.writable_paths[0]
+            analysis_path.parent.mkdir(parents=True, exist_ok=True)
+            analysis_path.write_text("analysis\n", encoding="utf-8")
+        elif spec.role == "fact_check":
+            result_path = selected_repo / ".paperium" / "workers" / spec.worker_id / "result.json"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(
+                json.dumps({"status": "passed", "findings": []}),
+                encoding="utf-8",
+            )
+        return {
+            "worker_id": spec.worker_id,
+            "status": "succeeded",
+            "stdout_path": f".paperium/workers/{spec.worker_id}/stdout.txt",
+            "stderr_path": f".paperium/workers/{spec.worker_id}/stderr.txt",
+            "output_path": f".paperium/workers/{spec.worker_id}/output.md",
+            "result_json_path": f".paperium/workers/{spec.worker_id}/result.json",
+            "canonical_result_path": spec.canonical_result_path,
+            "started_at": "2026-06-28T00:00:00Z",
+            "ended_at": "2026-06-28T00:00:01Z",
+            "failure_reason": None,
+        }
+
+    monkeypatch.setattr(paperium.analyze, "run_worker", fake_run_worker)
+
+    assert main(["--repo", str(repo), "analyze"]) == 0
+
+    state = load_state(repo / ".paperium" / "state.json")
+    selected = state.selected_experiments[0]
+    assert selected.status == "approved"
+    assert selected.disposition is None
+    assert state.phase == "ranking"
+    assert [worker.role for worker in state.workers] == ["analyze", "fact_check"]
+    assert [worker.id for worker in state.workers] == [
+        worker_id_for("analyze", experiment_path),
+        worker_id_for("fact_check", experiment_path),
+    ]
+    assert [worker.status for worker in state.workers] == ["succeeded", "succeeded"]
+    assert capsys.readouterr().err == ""
+
+
+def test_analyze_accepts_jobs_and_renders_progress(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    experiment_path = "questions/q001/experiments/exp001"
+    experiment = repo / experiment_path
+    (experiment / "outputs").mkdir(parents=True)
+    (experiment / "outputs" / "metrics.json").write_text('{"accuracy": 1}\n', encoding="utf-8")
+    save_state(
+        repo / ".paperium" / "state.json",
+        PaperiumState(
+            phase="analyzing",
+            selected_experiments=[
+                SelectedExperiment(
+                    path=experiment_path,
+                    question_readme=None,
+                    analysis_path=f"{experiment_path}/.paperium/analysis.md",
+                    fact_check_result_path=f"{experiment_path}/.paperium/fact-check.json",
+                    disposition=None,
+                )
+            ],
+        ),
+    )
+
+    monkeypatch.setattr(
+        paperium.output,
+        "render_progress",
+        lambda _state, message: print(f"PROGRESS {message}"),
+    )
+    monkeypatch.setattr(
+        paperium.analyze,
+        "run_worker",
+        lambda _repo, spec: {
+            "worker_id": spec.worker_id,
+            "status": "failed",
+            "failure_reason": "test",
+        },
+    )
+
+    assert main(["--repo", str(repo), "analyze", "--jobs", "2"]) == 2
+
+    captured = capsys.readouterr()
+    assert "PROGRESS" in captured.out
+
+
+def test_analyze_rejects_invalid_jobs(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+
+    assert main(["--repo", str(repo), "analyze", "--jobs", "0"]) == 4
+    assert "positive integer" in capsys.readouterr().err
+
+    assert main(["--repo", str(repo), "analyze", "--jobs", "not-int"]) == 4
+    assert "positive integer" in capsys.readouterr().err
+
+
+def test_analyze_rejects_missing_state_or_empty_selection(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    assert main(["--repo", str(repo), "analyze"]) == 2
+    captured = capsys.readouterr()
+    assert "state" in captured.err
+    assert "missing" in captured.err
+
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+
+    assert main(["--repo", str(repo), "analyze"]) == 2
+    captured = capsys.readouterr()
+    assert "selected experiments" in captured.err
 
 
 def test_command_surface_lists_v1_commands(capsys):
