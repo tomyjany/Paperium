@@ -10,8 +10,10 @@ def build_analysis_prompt(
     writable_paths: list[str],
     analysis_path: str,
     output_path: str,
+    approved_expansions: list[str] | None = None,
 ) -> str:
     context_request_protocol = _context_request_protocol(output_path, writable_paths)
+    approved_expansions_text = _format_paths(approved_expansions or [])
     question_context = (
         f"Parent question README: {question_readme}"
         if question_readme is not None
@@ -33,6 +35,9 @@ Selected experiment:
 
 Readable paths:
 {_format_paths(readable_paths)}
+
+Approved context expansions:
+{approved_expansions_text}
 
 Writable paths:
 {_format_paths(writable_paths)}
@@ -61,8 +66,10 @@ def build_fact_check_prompt(
     writable_paths: list[str],
     result_json_path: str,
     output_path: str,
+    approved_expansions: list[str] | None = None,
 ) -> str:
     context_request_protocol = _context_request_protocol(output_path, writable_paths)
+    approved_expansions_text = _format_paths(approved_expansions or [])
     return f"""\
 You are a fact-check worker for one selected experiment analysis.
 
@@ -78,6 +85,9 @@ Selected experiment:
 
 Readable paths:
 {_format_paths(readable_paths)}
+
+Approved context expansions:
+{approved_expansions_text}
 
 Writable paths:
 {_format_paths(writable_paths)}

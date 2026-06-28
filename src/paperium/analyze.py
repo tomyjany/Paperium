@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from paperium.context_requests import context_request_state_from_request, read_context_request
 from paperium.prompts import build_analysis_prompt, build_fact_check_prompt
 from paperium.selection import has_usable_run_artifact, resolve_question_readme
-from paperium.state import PaperiumState, SelectedExperiment, WorkerRecord
+from paperium.state import ContextRequestState, PaperiumState, SelectedExperiment, WorkerRecord
 from paperium.worker_runner import run_worker
 from paperium.workers import WorkerResult, WorkerSpec, build_worker_record, worker_id_for
 
@@ -68,6 +69,7 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
             ),
         )
         if analysis_result.status == "needs_context":
+            _ingest_context_request(repo, state, analysis_result.worker_id)
             return
         if analysis_result.status != "succeeded":
             _mark_worker_failure(selected)
@@ -87,6 +89,7 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
             ),
         )
         if fact_check_result.status == "needs_context":
+            _ingest_context_request(repo, state, fact_check_result.worker_id)
             return
         if fact_check_result.status != "succeeded":
             _mark_worker_failure(selected)
@@ -113,7 +116,8 @@ def _analysis_spec(
     worker_id = worker_id_for("analyze", selected.path)
     output_path = _worker_output_path(worker_id)
     readable_paths = _readable_paths(selected)
-    writable_paths = [selected.analysis_path, _worker_dir(worker_id)]
+    expansions = approved_expansions or []
+    writable_paths = [selected.analysis_path, _worker_dir(worker_id), ".paperium/context-requests"]
     return WorkerSpec(
         worker_id=worker_id,
         backend="codex",
@@ -127,10 +131,11 @@ def _analysis_spec(
             writable_paths=writable_paths,
             analysis_path=selected.analysis_path,
             output_path=output_path,
+            approved_expansions=expansions,
         ),
         timeout_seconds=WORKER_TIMEOUT_SECONDS,
         experiment_path=selected.path,
-        approved_expansions=approved_expansions or [],
+        approved_expansions=expansions,
     )
 
 
@@ -142,7 +147,8 @@ def _fact_check_spec(
     worker_id = worker_id_for("fact_check", selected.path)
     output_path = _worker_output_path(worker_id)
     readable_paths = _readable_paths(selected, extra=[selected.analysis_path])
-    writable_paths = [_worker_dir(worker_id)]
+    expansions = approved_expansions or []
+    writable_paths = [_worker_dir(worker_id), ".paperium/context-requests"]
     return WorkerSpec(
         worker_id=worker_id,
         backend="codex",
@@ -156,11 +162,12 @@ def _fact_check_spec(
             writable_paths=writable_paths,
             result_json_path=_worker_result_path(worker_id),
             output_path=output_path,
+            approved_expansions=expansions,
         ),
         timeout_seconds=WORKER_TIMEOUT_SECONDS,
         experiment_path=selected.path,
         canonical_result_path=selected.fact_check_result_path,
-        approved_expansions=approved_expansions or [],
+        approved_expansions=expansions,
     )
 
 
@@ -248,6 +255,29 @@ def _has_denied_context_request(state: PaperiumState, worker_id: str) -> bool:
         request.worker_id == worker_id and request.status == "denied"
         for request in state.context_requests
     )
+
+
+def _ingest_context_request(repo: Path, state: PaperiumState, worker_id: str) -> None:
+    request_dir = repo / ".paperium" / "context-requests"
+    if not request_dir.exists():
+        return
+    existing = {request.id for request in state.context_requests}
+    for request_path in sorted(request_dir.glob("*.json")):
+        if request_path.name.endswith(".decision.json"):
+            continue
+        try:
+            request = read_context_request(request_path)
+        except Exception as exc:
+            raise AnalyzeError(f"invalid_context_request: {exc}") from exc
+        if request.worker_id != worker_id or request.id in existing:
+            continue
+        decision_path = f".paperium/context-requests/{request.id}.decision.json"
+        state.context_requests.append(
+            ContextRequestState.from_dict(
+                context_request_state_from_request(request, decision_path=decision_path)
+            )
+        )
+        existing.add(request.id)
 
 
 def _analysis_complete(state: PaperiumState) -> bool:

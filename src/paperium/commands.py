@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from paperium.analyze import FactCheckError, load_fact_check_result
-from paperium.context_requests import write_context_decision
+from paperium.context_requests import (
+    ContextRequestError,
+    validate_requested_paths,
+    write_context_decision,
+)
 from paperium.dispositions import DispositionError, write_dispositions
 from paperium.question_focus import (
     QuestionFocusError,
@@ -97,6 +101,11 @@ def run_rank(repo: Path, state: PaperiumState, *, generate: bool) -> None:
     state.expected_section_ids = [
         _section_id_for(entry["question_path"]) for entry in validated_focus
     ]
+    state.ranking.approved = False
+    state.question_focus.approved = False
+    state.sections = []
+    state.final_write.status = "not_started"
+    state.final_write.written_at = None
     state.phase = "mapping"
 
 
@@ -142,6 +151,10 @@ def decide_context(repo: Path, state: PaperiumState, request_id: str, *, approve
     request = _find_context_request(state, request_id)
     if request.status != "pending":
         raise CommandError(f"context request is not pending: {request_id}")
+    try:
+        request.requested_paths = validate_requested_paths(request.requested_paths)
+    except ContextRequestError as exc:
+        raise CommandError(str(exc)) from exc
     path = _repo_path(repo.resolve(), request.decision_path, field_name="context decision path")
     write_context_decision(path, request_id, approved)
     request.status = "approved" if approved else "denied"
@@ -213,11 +226,10 @@ def write_paper(repo: Path, state: PaperiumState) -> None:
     ):
         raise CommandError("sections are not approved")
 
+    ordered_sections = _ordered_writable_sections(state)
     repo = repo.resolve()
     section_paths = [
-        _repo_path(repo, section.path, field_name="section path")
-        for section in state.sections
-        if section.status == "approved"
+        _repo_path(repo, section.path, field_name="section path") for section in ordered_sections
     ]
     paper_path = _repo_path(repo, state.final_write.paper_path, field_name="paper path")
     paper_path.write_text(render_paper(section_paths), encoding="utf-8")
@@ -345,6 +357,10 @@ def _included_paths_from_ranking_json(repo: Path, state: PaperiumState) -> list[
     if not path.exists():
         return []
     entries = _json_entries(_read_json(path), "entries", artifact_name="ranking.json")
+    try:
+        entries = validate_ranking_entries(_approved_experiment_paths(state), entries)
+    except RankingError as exc:
+        raise CommandError(f"ranking.json is invalid: {exc}") from exc
     return [entry["experiment_path"] for entry in entries if entry.get("bucket") == "include"]
 
 
@@ -401,6 +417,35 @@ def _recompute_final_write_status(state: PaperiumState) -> None:
         state.phase = "reviewing"
     else:
         state.final_write.status = "not_started"
+
+
+def _ordered_writable_sections(state: PaperiumState) -> list[SectionState]:
+    expected = list(state.expected_section_ids)
+    by_id = {section.id: section for section in state.sections}
+    unexpected = [
+        section.id
+        for section in state.sections
+        if section.id not in expected and section.status == "approved"
+    ]
+    if unexpected:
+        raise CommandError(f"unexpected approved section: {', '.join(sorted(unexpected))}")
+
+    ordered: list[SectionState] = []
+    for section_id in expected:
+        section = by_id.get(section_id)
+        if section is None:
+            raise CommandError(f"section is not approved: {section_id}")
+        if section.status == "skipped":
+            continue
+        if section.status != "approved" or section.factual_review_status != "passed":
+            raise CommandError(f"section is not approved: {section_id}")
+        if not section.factual_review_result_path:
+            raise CommandError(f"section review is missing: {section_id}")
+        ordered.append(section)
+
+    if not ordered:
+        raise CommandError("sections are not approved")
+    return ordered
 
 
 def _json_entries(data: Any, field: str, *, artifact_name: str) -> list[Any]:

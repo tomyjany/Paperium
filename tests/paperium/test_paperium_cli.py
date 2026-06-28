@@ -441,6 +441,7 @@ def test_end_to_end_write_from_approved_section(tmp_path):
     state = load_state(repo / ".paperium" / "state.json")
     state.ranking.approved = True
     state.question_focus.approved = True
+    state.expected_section_ids = ["q001-answer"]
     state.sections = [
         SectionState(
             id="q001-answer",
@@ -509,6 +510,67 @@ def test_rank_writes_required_artifacts_from_existing_ranking_json(tmp_path):
     assert ranked.expected_section_ids == ["questions-q001"]
 
 
+def test_rank_resets_prior_approvals_sections_and_write_state(tmp_path):
+    repo = tmp_path / "repo"
+    exp = repo / "questions/q001/experiments/exp001"
+    exp.mkdir(parents=True)
+    assert main(["--repo", str(repo), "init"]) == 0
+    state = load_state(repo / ".paperium" / "state.json")
+    state.selected_experiments = [approved_selected_experiment()]
+    state.ranking.approved = True
+    state.question_focus.approved = True
+    state.sections = [
+        SectionState(
+            id="old",
+            title="Old",
+            path=".paperium/sections/old.md",
+            status="approved",
+            factual_review_status="passed",
+            factual_review_result_path=".paperium/sections/old.review.json",
+        )
+    ]
+    state.final_write.status = "written"
+    state.final_write.written_at = "2026-06-28T00:00:00+00:00"
+    save_state(repo / ".paperium" / "state.json", state)
+    (repo / ".paperium" / "ranking.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "experiment_path": "questions/q001/experiments/exp001",
+                        "bucket": "include",
+                        "reason": "best",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / ".paperium" / "question-focus.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "question_path": "questions/q001",
+                        "included_experiments": ["questions/q001/experiments/exp001"],
+                        "answer_focus": "Best tested result",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--repo", str(repo), "rank"]) == 0
+
+    reranked = load_state(repo / ".paperium" / "state.json")
+    assert reranked.ranking.approved is False
+    assert reranked.question_focus.approved is False
+    assert reranked.sections == []
+    assert reranked.final_write.status == "not_started"
+    assert reranked.final_write.written_at is None
+
+
 def test_rank_rejects_invalid_ranking_json(tmp_path, capsys):
     repo = tmp_path / "repo"
     exp = repo / "questions/q001/experiments/exp001"
@@ -520,6 +582,20 @@ def test_rank_rejects_invalid_ranking_json(tmp_path, capsys):
     (repo / ".paperium" / "ranking.json").write_text('{"entries": []}', encoding="utf-8")
 
     assert main(["--repo", str(repo), "rank"]) == 2
+
+    assert "ranking.json is invalid" in capsys.readouterr().err
+
+
+def test_approve_question_focus_rejects_malformed_ranking_json(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["--repo", str(repo), "init"]) == 0
+    paperium_dir = repo / ".paperium"
+    (paperium_dir / "ranking.json").write_text('{"entries": [1]}', encoding="utf-8")
+    (paperium_dir / "question-focus.md").write_text("# Focus\n", encoding="utf-8")
+    (paperium_dir / "question-focus.json").write_text('{"entries": []}', encoding="utf-8")
+
+    assert main(["--repo", str(repo), "approve", "question-focus"]) == 2
 
     assert "ranking.json is invalid" in capsys.readouterr().err
 
@@ -637,6 +713,29 @@ def test_context_approve_and_deny_commands_record_decision(tmp_path):
     assert denied.context_requests[0].status == "denied"
 
 
+def test_context_approve_rejects_unsafe_persisted_requested_path(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["--repo", str(repo), "init"]) == 0
+    state_path = repo / ".paperium" / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    data["context_requests"] = [
+        {
+            "id": "req1",
+            "worker_id": "w1",
+            "requested_paths": ["../outside"],
+            "reason": "Need parser",
+            "status": "pending",
+            "decision_path": ".paperium/context-requests/req1.decision.json",
+        }
+    ]
+    state_path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert main(["--repo", str(repo), "context", "approve", "req1"]) == 2
+
+    assert "requested path" in capsys.readouterr().err
+
+
 def test_approved_context_decision_is_applied_to_next_analyze_worker(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     exp_path = "questions/q001/experiments/exp001"
@@ -662,6 +761,7 @@ def test_approved_context_decision_is_applied_to_next_analyze_worker(tmp_path, m
     def fake_runner(_repo, spec):
         if spec.role == "analyze":
             assert "questions/q001/src" in spec.approved_expansions
+            assert "questions/q001/src" in spec.prompt
             analysis_path = repo / exp_path / ".paperium" / "analysis.md"
             analysis_path.parent.mkdir(parents=True, exist_ok=True)
             analysis_path.write_text("Analysis.", encoding="utf-8")
@@ -676,6 +776,47 @@ def test_approved_context_decision_is_applied_to_next_analyze_worker(tmp_path, m
     monkeypatch.setattr(paperium.analyze, "run_worker", fake_runner)
 
     assert main(["--repo", str(repo), "analyze"]) == 0
+
+
+def test_analyze_ingests_context_request_from_worker(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    exp_path = "questions/q001/experiments/exp001"
+    exp = repo / exp_path
+    outputs = exp / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "metrics.json").write_text("{}\n", encoding="utf-8")
+    assert main(["--repo", str(repo), "init"]) == 0
+    assert main(["--repo", str(repo), "select", exp_path]) == 0
+
+    def fake_runner(selected_repo, spec):
+        assert ".paperium/context-requests" in spec.writable_paths
+        request_dir = selected_repo / ".paperium" / "context-requests"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        (request_dir / "req1.json").write_text(
+            json.dumps(
+                {
+                    "id": "req1",
+                    "worker_id": spec.worker_id,
+                    "requested_paths": ["questions/q001/src"],
+                    "reason": "Need parser",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "worker_id": spec.worker_id,
+            "status": "needs_context",
+            "failure_reason": None,
+        }
+
+    monkeypatch.setattr(paperium.analyze, "run_worker", fake_runner)
+
+    assert main(["--repo", str(repo), "analyze"]) == 0
+
+    updated = load_state(repo / ".paperium" / "state.json")
+    assert updated.context_requests[0].id == "req1"
+    assert updated.context_requests[0].worker_id == worker_id_for("analyze", exp_path)
+    assert updated.context_requests[0].status == "pending"
 
 
 def test_denied_context_decision_leaves_experiment_needing_human_review(tmp_path):
@@ -776,6 +917,60 @@ def test_section_skip_records_skipped_section_but_does_not_write_all_skipped_pap
     skipped = load_state(repo / ".paperium" / "state.json")
     assert skipped.sections[0].status == "skipped"
     assert skipped.final_write.status != "ready"
+
+
+def test_write_uses_expected_section_order_and_rejects_unexpected_approved_sections(
+    tmp_path, capsys
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["--repo", str(repo), "init"]) == 0
+    sections_dir = repo / ".paperium" / "sections"
+    sections_dir.mkdir(parents=True)
+    (sections_dir / "a.md").write_text("# A\n", encoding="utf-8")
+    (sections_dir / "b.md").write_text("# B\n", encoding="utf-8")
+    (sections_dir / "old.md").write_text("# Old\n", encoding="utf-8")
+    state = load_state(repo / ".paperium" / "state.json")
+    state.ranking.approved = True
+    state.question_focus.approved = True
+    state.expected_section_ids = ["b", "a"]
+    state.sections = [
+        SectionState(
+            id="a",
+            title="A",
+            path=".paperium/sections/a.md",
+            status="approved",
+            factual_review_status="passed",
+            factual_review_result_path=".paperium/sections/a.review.json",
+        ),
+        SectionState(
+            id="b",
+            title="B",
+            path=".paperium/sections/b.md",
+            status="approved",
+            factual_review_status="passed",
+            factual_review_result_path=".paperium/sections/b.review.json",
+        ),
+        SectionState(
+            id="old",
+            title="Old",
+            path=".paperium/sections/old.md",
+            status="approved",
+            factual_review_status="passed",
+            factual_review_result_path=".paperium/sections/old.review.json",
+        ),
+    ]
+    state.final_write.status = "ready"
+    save_state(repo / ".paperium" / "state.json", state)
+
+    assert main(["--repo", str(repo), "write"]) == 2
+    assert "unexpected approved section" in capsys.readouterr().err
+
+    state.sections = [section for section in state.sections if section.id != "old"]
+    save_state(repo / ".paperium" / "state.json", state)
+
+    assert main(["--repo", str(repo), "write"]) == 0
+    assert (repo / "PAPER.md").read_text(encoding="utf-8") == "# B\n\n# A\n"
 
 
 def test_command_surface_lists_v1_commands(capsys):

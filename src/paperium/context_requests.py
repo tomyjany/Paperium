@@ -84,7 +84,7 @@ def context_request_state_from_request(
 def apply_context_decision(
     worker_record: dict[str, Any], requested_paths: list[str], approved: bool
 ) -> dict[str, Any]:
-    paths = _validated_requested_paths(requested_paths)
+    paths = validate_requested_paths(requested_paths)
     if approved:
         worker_record.setdefault("approved_expansions", []).extend(paths)
     else:
@@ -92,11 +92,12 @@ def apply_context_decision(
     return worker_record
 
 
+def validate_requested_paths(value: Any) -> list[str]:
+    return _validated_requested_paths(value)
+
+
 def _sorted_json(data: dict[str, Any]) -> str:
-    return (
-        json.dumps(data, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n"
-    )
+    return json.dumps(data, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
 def _required_string(data: dict[str, Any], field: str) -> str:
