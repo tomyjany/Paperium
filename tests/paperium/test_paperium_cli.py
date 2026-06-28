@@ -94,6 +94,17 @@ def test_select_menu_rejects_non_interactive(tmp_path, monkeypatch, capsys):
     assert captured.out == ""
 
 
+def test_select_rejects_empty_manual_selection(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    save_state(repo / ".paperium" / "state.json", PaperiumState())
+
+    assert main(["--repo", str(repo), "select"]) == 4
+
+    captured = capsys.readouterr()
+    assert "experiment path" in captured.err
+    assert captured.out == ""
+
+
 def test_select_manual_and_menu_are_mutually_exclusive(tmp_path, capsys):
     repo = tmp_path / "repo"
     create_selectable_experiment(repo, "questions/q001/experiments/exp001")

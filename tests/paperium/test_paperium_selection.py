@@ -20,6 +20,17 @@ def test_discovers_question_experiments(tmp_path):
     assert discover_menu_experiments(repo) == [exp_a, exp_b]
 
 
+def test_discovery_ignores_non_experiment_contract_directories(tmp_path):
+    repo = tmp_path / "repo"
+    valid = repo / "questions/q001/experiments/valid"
+    invalid = repo / "questions/q001/experiments/empty"
+    valid.mkdir(parents=True)
+    invalid.mkdir(parents=True)
+    (valid / "README.md").write_text("# Exp\n")
+
+    assert discover_menu_experiments(repo) == [valid]
+
+
 def test_discovery_ignores_symlink_experiment_escape(tmp_path):
     repo = tmp_path / "repo"
     experiments = repo / "questions/q001/experiments"
@@ -40,6 +51,7 @@ def test_discovery_ignores_nested_helper_experiments(tmp_path):
     exp_a = repo / "questions/q001/experiments/exp-a"
     helper = exp_a / "src/experiments/helper"
     helper.mkdir(parents=True)
+    (exp_a / "README.md").write_text("# Exp A\n")
 
     assert discover_menu_experiments(repo) == [exp_a]
 

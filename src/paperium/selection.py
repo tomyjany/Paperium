@@ -92,7 +92,9 @@ def discover_menu_experiments(repo: Path) -> list[Path]:
         child
         for experiments_dir in _question_owned_experiments_dirs(repo)
         for child in experiments_dir.iterdir()
-        if child.is_dir() and _is_relative_to(child.resolve(), repo)
+        if child.is_dir()
+        and _is_relative_to(child.resolve(), repo)
+        and _matches_experiment_contract(child)
     )
 
 

@@ -96,6 +96,9 @@ def _run_select(
     if experiments_menu and (not stdin_is_tty() or not stdout_is_tty()):
         print("paperium: interactive experiment selection requires a TTY", file=sys.stderr)
         return INVALID_INVOCATION
+    if not experiments_menu and not experiment_paths:
+        print("paperium: select requires at least one experiment path", file=sys.stderr)
+        return INVALID_INVOCATION
 
     state_path = _state_path(repo)
     if not state_path.exists():
