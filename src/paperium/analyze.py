@@ -131,7 +131,7 @@ def _validate_fact_check_finding(
         raise FactCheckError("fact-check finding has invalid fields")
 
     severity = finding["severity"]
-    if severity not in FACT_CHECK_SEVERITIES:
+    if not isinstance(severity, str) or severity not in FACT_CHECK_SEVERITIES:
         raise FactCheckError(f"invalid fact-check finding severity: {severity}")
 
     claim = finding["claim"]

@@ -279,6 +279,18 @@ def test_load_fact_check_result_rejects_invalid_severity_empty_fields_and_failed
         load_fact_check_result(path)
 
 
+@pytest.mark.parametrize("severity", [[], None, 1])
+def test_load_fact_check_result_rejects_non_string_severity(tmp_path, severity):
+    path = tmp_path / "fact-check.json"
+    _write_fact_check(
+        path,
+        {"status": "failed", "findings": [_finding(severity=severity)]},
+    )
+
+    with pytest.raises(FactCheckError):
+        load_fact_check_result(path)
+
+
 def test_apply_passed_fact_check_makes_experiment_ranking_eligible():
     selected = {"status": "running", "repair_attempts": 1, "disposition": "deferred"}
     updated = apply_fact_check_result(
