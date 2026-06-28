@@ -155,6 +155,39 @@ def test_run_worker_fails_closed_when_git_status_fails_before_worker_starts(
     assert result.failure_reason == "boundary_audit_failed"
 
 
+def test_run_worker_fails_closed_when_boundary_audit_fails_after_worker_starts(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    snapshots = iter(
+        [
+            ([], {}),
+            worker_runner.boundary_audit.BoundaryAuditError("git status failed"),
+        ]
+    )
+    worker_started = False
+
+    def fake_boundary_snapshot(repo):
+        snapshot = next(snapshots)
+        if isinstance(snapshot, worker_runner.boundary_audit.BoundaryAuditError):
+            raise snapshot
+        return snapshot
+
+    def fake_popen(*args, **kwargs):
+        nonlocal worker_started
+        worker_started = True
+        return FakeProcess()
+
+    monkeypatch.setattr(worker_runner, "_boundary_snapshot", fake_boundary_snapshot)
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    spec = WorkerSpec("w1", "codex", "analyze", [], [".paperium/workers/w1"], "prompt", 30)
+    result = run_worker(repo, spec)
+    assert worker_started is True
+    assert result.status == "failed"
+    assert result.failure_reason == "boundary_audit_failed"
+
+
 def test_run_worker_copies_result_json_to_canonical_path(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
