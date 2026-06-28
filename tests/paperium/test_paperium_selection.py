@@ -57,12 +57,44 @@ def test_empty_outputs_is_not_usable_run_artifact(tmp_path):
     assert not has_usable_run_artifact(exp)
 
 
+def test_empty_outputs_is_selectable_but_not_claimable(tmp_path):
+    repo = tmp_path / "repo"
+    exp = repo / "questions/q001/experiments/exp001"
+    (exp / "outputs").mkdir(parents=True)
+    assert validate_manual_experiments(repo, ["questions/q001/experiments/exp001"]) == [
+        exp
+    ]
+    assert not has_usable_run_artifact(exp)
+
+
 def test_outputs_readme_is_not_usable_run_artifact(tmp_path):
     exp = tmp_path / "exp"
     outputs = exp / "outputs"
     outputs.mkdir(parents=True)
     (outputs / "README.md").write_text("# Notes\n")
     assert not has_usable_run_artifact(exp)
+
+
+def test_excluded_files_under_outputs_are_not_usable_run_artifacts(tmp_path):
+    exp = tmp_path / "exp"
+    outputs = exp / "outputs"
+    outputs.mkdir(parents=True)
+    excluded_files = [
+        outputs / "docker-compose.yml",
+        outputs / "metadata.json",
+        outputs / "pyproject.toml",
+        outputs / "README.md",
+        outputs / "runner.sh",
+        outputs / ".venv/lib/python/site-packages/package.py",
+    ]
+    for artifact in excluded_files:
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("not run data\n")
+        assert not has_usable_run_artifact(exp)
+        artifact.unlink()
+
+    (outputs / "metrics.json").write_text("{}\n")
+    assert has_usable_run_artifact(exp)
 
 
 def test_resolves_parent_question_readme(tmp_path):

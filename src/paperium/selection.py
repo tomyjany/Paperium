@@ -47,6 +47,36 @@ RUNNER_SCRIPT_NAMES = {
     "run.py",
 }
 
+CONTRACT_DIR_NAMES = {
+    "outputs",
+}
+
+EXCLUDED_ARTIFACT_DIR_NAMES = {
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+}
+
+EXCLUDED_ARTIFACT_FILE_NAMES = {
+    "readme.md",
+    "metadata.json",
+    "docker-compose.yml",
+    "docker-stack.yml",
+    "pyproject.toml",
+    "poetry.lock",
+    "uv.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+}
+
+EXCLUDED_ARTIFACT_SUFFIXES = {
+    ".lock",
+    ".py",
+    ".sh",
+}
+
 
 def discover_menu_experiments(repo: Path) -> list[Path]:
     return sorted(
@@ -107,6 +137,8 @@ def _resolve_selection_path(repo: Path, raw_path: str) -> Path:
 def _matches_experiment_contract(experiment: Path) -> bool:
     if has_usable_run_artifact(experiment):
         return True
+    if any((experiment / name).is_dir() for name in CONTRACT_DIR_NAMES):
+        return True
     if any((experiment / name).exists() for name in CONTRACT_FILE_NAMES):
         return True
     return any(
@@ -122,7 +154,7 @@ def _has_artifact_in_named_dir(experiment: Path) -> bool:
         if not artifact_dir.is_dir() or artifact_dir.name not in RUN_ARTIFACT_DIR_NAMES:
             continue
         for artifact in artifact_dir.rglob("*"):
-            if _is_non_readme_file(artifact):
+            if _is_run_produced_artifact(artifact):
                 return True
     return False
 
@@ -138,8 +170,25 @@ def _has_root_artifact(experiment: Path) -> bool:
     )
 
 
-def _is_non_readme_file(path: Path) -> bool:
-    return path.is_file() and path.name.lower() != "readme.md" and path.stat().st_size > 0
+def _is_run_produced_artifact(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size == 0:
+        return False
+    return not _is_excluded_artifact_path(path)
+
+
+def _is_excluded_artifact_path(path: Path) -> bool:
+    path_parts = {part.lower() for part in path.parts}
+    if path_parts & EXCLUDED_ARTIFACT_DIR_NAMES:
+        return True
+
+    file_name = path.name.lower()
+    if file_name in EXCLUDED_ARTIFACT_FILE_NAMES:
+        return True
+    if file_name in RUNNER_SCRIPT_NAMES:
+        return True
+    if file_name.startswith(("config.", "plan.")):
+        return True
+    return path.suffix.lower() in EXCLUDED_ARTIFACT_SUFFIXES
 
 
 def _matches_root_artifact_name(file_name: str) -> bool:
