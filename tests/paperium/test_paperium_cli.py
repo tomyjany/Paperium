@@ -827,10 +827,13 @@ def test_analyze_ignores_stale_malformed_context_request_from_other_worker(tmp_p
     outputs.mkdir(parents=True)
     (outputs / "metrics.json").write_text("{}\n", encoding="utf-8")
     stale_dir = repo / ".paperium" / "context-requests"
-    stale_dir.mkdir(parents=True)
-    (stale_dir / "old.json").write_text("{not json", encoding="utf-8")
     assert main(["--repo", str(repo), "init"]) == 0
     assert main(["--repo", str(repo), "select", exp_path]) == 0
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    (stale_dir / "old.json").write_text(
+        f"{{not json {worker_id_for('analyze', exp_path)}",
+        encoding="utf-8",
+    )
 
     def fake_runner(selected_repo, spec):
         request_dir = selected_repo / ".paperium" / "context-requests"

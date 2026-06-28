@@ -265,13 +265,8 @@ def _ingest_context_request(repo: Path, state: PaperiumState, worker_id: str) ->
     for request_path in sorted(request_dir.glob("*.json")):
         if request_path.name.endswith(".decision.json"):
             continue
-        try:
-            raw_text = request_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise AnalyzeError(f"invalid_context_request: {exc}") from exc
-        except OSError:
-            continue
-        if worker_id not in raw_text:
+        request_worker_id = _request_worker_id(request_path)
+        if request_worker_id is None or request_worker_id != worker_id:
             continue
         try:
             request = read_context_request(request_path)
@@ -286,6 +281,17 @@ def _ingest_context_request(repo: Path, state: PaperiumState, worker_id: str) ->
             )
         )
         existing.add(request.id)
+
+
+def _request_worker_id(request_path: Path) -> str | None:
+    try:
+        data = json.loads(request_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    worker_id = data.get("worker_id")
+    return worker_id if isinstance(worker_id, str) else None
 
 
 def _analysis_complete(state: PaperiumState) -> bool:
