@@ -163,8 +163,7 @@ def _has_root_artifact(experiment: Path) -> bool:
     if not experiment.is_dir():
         return False
     return any(
-        path.is_file()
-        and path.stat().st_size > 0
+        _is_run_produced_artifact(path)
         and _matches_root_artifact_name(path.name)
         for path in experiment.iterdir()
     )

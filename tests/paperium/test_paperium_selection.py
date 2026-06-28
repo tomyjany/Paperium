@@ -44,6 +44,19 @@ def test_run_artifact_patterns_outside_outputs_are_usable(tmp_path):
         artifact.unlink()
 
 
+def test_root_level_excluded_artifact_patterns_are_not_usable(tmp_path):
+    exp = tmp_path / "exp"
+    exp.mkdir()
+    for file_name in ["metrics.py", "summary.sh", "metrics.lock"]:
+        artifact = exp / file_name
+        artifact.write_text("not run data\n")
+        assert not has_usable_run_artifact(exp)
+        artifact.unlink()
+
+    (exp / "summary.json").write_text("{}\n")
+    assert has_usable_run_artifact(exp)
+
+
 def test_readme_only_is_not_usable_run_artifact(tmp_path):
     exp = tmp_path / "exp"
     exp.mkdir()
