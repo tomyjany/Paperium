@@ -53,11 +53,19 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
         if selected.status not in {"pending", "running"}:
             continue
 
+        analysis_worker_id = worker_id_for("analyze", selected.path)
+        if _has_denied_context_request(state, analysis_worker_id):
+            _mark_worker_failure(selected)
+            continue
+
         selected.status = "running"
         analysis_result = _run_and_record_worker(
             repo,
             state,
-            _analysis_spec(selected),
+            _analysis_spec(
+                selected,
+                approved_expansions=_approved_context_expansions(state, analysis_worker_id),
+            ),
         )
         if analysis_result.status == "needs_context":
             return
@@ -65,10 +73,18 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
             _mark_worker_failure(selected)
             raise AnalyzeError(analysis_result.failure_reason or "analysis_worker_failed")
 
+        fact_check_worker_id = worker_id_for("fact_check", selected.path)
+        if _has_denied_context_request(state, fact_check_worker_id):
+            _mark_worker_failure(selected)
+            continue
+
         fact_check_result = _run_and_record_worker(
             repo,
             state,
-            _fact_check_spec(selected),
+            _fact_check_spec(
+                selected,
+                approved_expansions=_approved_context_expansions(state, fact_check_worker_id),
+            ),
         )
         if fact_check_result.status == "needs_context":
             return
@@ -89,7 +105,10 @@ def analyze_selected_experiments(repo: Path, state: PaperiumState, jobs: int = 2
         state.phase = "analyzing"
 
 
-def _analysis_spec(selected: SelectedExperiment) -> WorkerSpec:
+def _analysis_spec(
+    selected: SelectedExperiment,
+    approved_expansions: list[str] | None = None,
+) -> WorkerSpec:
     _normalize_selected_paths(selected)
     worker_id = worker_id_for("analyze", selected.path)
     output_path = _worker_output_path(worker_id)
@@ -111,10 +130,14 @@ def _analysis_spec(selected: SelectedExperiment) -> WorkerSpec:
         ),
         timeout_seconds=WORKER_TIMEOUT_SECONDS,
         experiment_path=selected.path,
+        approved_expansions=approved_expansions or [],
     )
 
 
-def _fact_check_spec(selected: SelectedExperiment) -> WorkerSpec:
+def _fact_check_spec(
+    selected: SelectedExperiment,
+    approved_expansions: list[str] | None = None,
+) -> WorkerSpec:
     _normalize_selected_paths(selected)
     worker_id = worker_id_for("fact_check", selected.path)
     output_path = _worker_output_path(worker_id)
@@ -137,6 +160,7 @@ def _fact_check_spec(selected: SelectedExperiment) -> WorkerSpec:
         timeout_seconds=WORKER_TIMEOUT_SECONDS,
         experiment_path=selected.path,
         canonical_result_path=selected.fact_check_result_path,
+        approved_expansions=approved_expansions or [],
     )
 
 
@@ -209,6 +233,21 @@ def _update_selected_experiment(selected: SelectedExperiment, values: dict[str, 
 def _mark_worker_failure(selected: SelectedExperiment) -> None:
     selected.status = "needs_human_review"
     selected.disposition = "needs_human_review"
+
+
+def _approved_context_expansions(state: PaperiumState, worker_id: str) -> list[str]:
+    paths: list[str] = []
+    for request in state.context_requests:
+        if request.worker_id == worker_id and request.status == "approved":
+            paths.extend(request.requested_paths)
+    return list(dict.fromkeys(paths))
+
+
+def _has_denied_context_request(state: PaperiumState, worker_id: str) -> bool:
+    return any(
+        request.worker_id == worker_id and request.status == "denied"
+        for request in state.context_requests
+    )
 
 
 def _analysis_complete(state: PaperiumState) -> bool:
