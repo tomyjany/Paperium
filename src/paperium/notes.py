@@ -1,6 +1,9 @@
 import re
 
-_NOTE_PATTERN = re.compile(r"/([^/\n]+?)/")
+_NOTE_PATTERN = re.compile(
+    r"(?:(?<=\s)|(?<=^)|(?<=\|)|(?<=\())/([^/\n]+?)/(?=[\s.,;:)|]|$)",
+    re.MULTILINE,
+)
 
 
 def extract_notes(text: str) -> list[str]:

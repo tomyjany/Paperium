@@ -11,8 +11,12 @@ def test_extracts_multiple_notes_in_order():
 
 
 def test_ignores_paths_and_slashes_without_spaces():
-    text = "See questions/q001/experiments/exp001 and a pair."
+    text = "See questions/q001/experiments/exp001 and a/b pairs."
     assert extract_notes(text) == []
+
+
+def test_ignores_two_paths_in_one_line():
+    assert extract_notes("compare experiments/exp001 and experiments/exp002 daily") == []
 
 
 def test_note_inside_table_cell():
