@@ -22,19 +22,28 @@ def format_status_plain(state: PaperiumState) -> str:
     selected_count, running_count, failed_count, needs_context_count, issue_count = _status_counts(
         state
     )
-    return "\n".join(
-        [
-            f"Phase: {state.phase}",
-            f"Selected experiments: {selected_count}",
-            (
-                "Workers: "
-                f"{running_count} running, "
-                f"{failed_count} failed, "
-                f"{needs_context_count} waiting for user"
-            ),
-            f"Experiment issues: {issue_count}",
-        ]
-    )
+    lines = [
+        f"Phase: {state.phase}",
+        f"Selected experiments: {selected_count}",
+        (
+            "Workers: "
+            f"{running_count} running, "
+            f"{failed_count} failed, "
+            f"{needs_context_count} waiting for user"
+        ),
+        f"Experiment issues: {issue_count}",
+    ]
+    lines.append("sections:")
+    for section in sorted(state.sections, key=lambda item: (item.order, item.id)):
+        lines.append(
+            f"  {section.order:>3}  {section.id}  {section.status}"
+            f"  rounds={section.revision_rounds}"
+        )
+    if state.report.assembled_at is None:
+        lines.append("report: not assembled")
+    else:
+        lines.append(f"report: {state.report.path} stale={state.report.stale}")
+    return "\n".join(lines)
 
 
 def render_progress(state: PaperiumState, message: str) -> None:

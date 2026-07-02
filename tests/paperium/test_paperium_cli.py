@@ -406,61 +406,66 @@ def approved_selected_experiment(path="questions/q001/experiments/exp001"):
     )
 
 
-def test_write_refuses_without_ranking_and_question_focus_approval(tmp_path, capsys):
+def _init_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main(["--repo", str(repo), "init"]) == 0
-
-    assert main(["--repo", str(repo), "write"]) == 2
-
-    assert "ranking and question focus are not approved" in capsys.readouterr().err
+    return repo
 
 
-def test_write_refuses_without_approved_sections_after_approvals(tmp_path, capsys):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    assert main(["--repo", str(repo), "init"]) == 0
-    state = load_state(repo / ".paperium" / "state.json")
-    state.ranking.approved = True
-    state.question_focus.approved = True
-    state.final_write.status = "ready"
-    save_state(repo / ".paperium" / "state.json", state)
-
-    assert main(["--repo", str(repo), "write"]) == 2
-
-    assert "sections are not approved" in capsys.readouterr().err
+def test_section_add_list_and_approve_flow(tmp_path, capsys):
+    repo = _init_repo(tmp_path)
+    assert main(["--repo", str(repo), "section", "add", "ch1-s1", "--title", "Dataset"]) == 0
+    (repo / ".paperium/sections/ch1-s1.md").write_text("## Dataset\nbody\n")
+    assert main(["--repo", str(repo), "section", "record", "ch1-s1"]) == 0
+    assert main(["--repo", str(repo), "section", "approve", "ch1-s1"]) == 0
+    assert main(["--repo", str(repo), "section", "list"]) == 0
+    output = capsys.readouterr().out
+    assert "ch1-s1" in output
+    assert "approved" in output
 
 
-def test_end_to_end_write_from_approved_section(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    assert main(["--repo", str(repo), "init"]) == 0
-    section = repo / ".paperium" / "sections" / "q001-answer.md"
-    section.parent.mkdir(parents=True)
-    section.write_text("# Q001\n\nThe answer is short.\n", encoding="utf-8")
-    state = load_state(repo / ".paperium" / "state.json")
-    state.ranking.approved = True
-    state.question_focus.approved = True
-    state.expected_section_ids = ["q001-answer"]
-    state.sections = [
-        SectionState(
-            id="q001-answer",
-            title="Q001",
-            path=".paperium/sections/q001-answer.md",
-            status="approved",
-            factual_review_status="passed",
-            factual_review_result_path=".paperium/sections/q001-answer.review.json",
-        )
-    ]
-    state.final_write.status = "ready"
-    save_state(repo / ".paperium" / "state.json", state)
+def test_section_notes_and_prompt(tmp_path, capsys):
+    repo = _init_repo(tmp_path)
+    assert main(["--repo", str(repo), "section", "add", "ch1-s1", "--title", "Dataset"]) == 0
+    (repo / ".paperium/sections/ch1-s1.md").write_text("Text /fix this wording/ more.\n")
+    assert main(["--repo", str(repo), "section", "record", "ch1-s1"]) == 0
+    assert main(["--repo", str(repo), "section", "notes", "ch1-s1"]) == 0
+    assert "fix this wording" in capsys.readouterr().out
+    assert main(["--repo", str(repo), "section", "prompt", "ch1-s1"]) == 0
+    assert "You are revising one section" in capsys.readouterr().out
+    assert (repo / ".paperium/prompts/ch1-s1.round2.prompt.md").exists()
 
-    assert main(["--repo", str(repo), "write"]) == 0
 
-    assert (repo / "PAPER.md").read_text(encoding="utf-8") == "# Q001\n\nThe answer is short.\n"
-    written = load_state(repo / ".paperium" / "state.json")
-    assert written.final_write.status == "written"
-    assert written.phase == "complete"
+def test_assemble_and_reconcile_commands(tmp_path):
+    repo = _init_repo(tmp_path)
+    assert main(["--repo", str(repo), "section", "add", "ch1-s1", "--title", "Dataset"]) == 0
+    (repo / ".paperium/sections/ch1-s1.md").write_text("## Dataset\nbody\n")
+    assert main(["--repo", str(repo), "section", "record", "ch1-s1", "--approve"]) == 0
+    assert main(["--repo", str(repo), "assemble"]) == 0
+    assert (repo / ".paperium/REPORT.md").exists()
+    assert main(["--repo", str(repo), "reconcile"]) == 0
+    # unapproved section blocks full assembly, draft mode succeeds
+    assert main(["--repo", str(repo), "section", "add", "ch2-s1", "--title", "CPU"]) == 0
+    (repo / ".paperium/sections/ch2-s1.md").write_text("## CPU\nbody\n")
+    assert main(["--repo", str(repo), "section", "record", "ch2-s1"]) == 0
+    assert main(["--repo", str(repo), "assemble"]) == 2
+    assert main(["--repo", str(repo), "assemble", "--allow-draft"]) == 0
+    assert (repo / ".paperium/REPORT.draft.md").exists()
+
+
+def test_write_command_is_gone(tmp_path):
+    repo = _init_repo(tmp_path)
+    assert main(["--repo", str(repo), "write"]) == 4
+
+
+def test_status_shows_sections(tmp_path, capsys):
+    repo = _init_repo(tmp_path)
+    assert main(["--repo", str(repo), "section", "add", "ch1-s1", "--title", "Dataset"]) == 0
+    assert main(["--repo", str(repo), "status"]) == 0
+    output = capsys.readouterr().out
+    assert "ch1-s1" in output
+    assert "report: not assembled" in output
 
 
 def test_rank_writes_required_artifacts_from_existing_ranking_json(tmp_path):
@@ -507,10 +512,9 @@ def test_rank_writes_required_artifacts_from_existing_ranking_json(tmp_path):
     assert (repo / ".paperium" / "question-focus.md").exists()
     ranked = load_state(repo / ".paperium" / "state.json")
     assert ranked.phase == "mapping"
-    assert ranked.expected_section_ids == ["questions-q001"]
 
 
-def test_rank_resets_prior_approvals_sections_and_write_state(tmp_path):
+def test_rank_resets_prior_approvals(tmp_path):
     repo = tmp_path / "repo"
     exp = repo / "questions/q001/experiments/exp001"
     exp.mkdir(parents=True)
@@ -524,13 +528,10 @@ def test_rank_resets_prior_approvals_sections_and_write_state(tmp_path):
             id="old",
             title="Old",
             path=".paperium/sections/old.md",
+            facts_path=".paperium/sections/old.facts.md",
             status="approved",
-            factual_review_status="passed",
-            factual_review_result_path=".paperium/sections/old.review.json",
         )
     ]
-    state.final_write.status = "written"
-    state.final_write.written_at = "2026-06-28T00:00:00+00:00"
     save_state(repo / ".paperium" / "state.json", state)
     (repo / ".paperium" / "ranking.json").write_text(
         json.dumps(
@@ -566,9 +567,6 @@ def test_rank_resets_prior_approvals_sections_and_write_state(tmp_path):
     reranked = load_state(repo / ".paperium" / "state.json")
     assert reranked.ranking.approved is False
     assert reranked.question_focus.approved is False
-    assert reranked.sections == []
-    assert reranked.final_write.status == "not_started"
-    assert reranked.final_write.written_at is None
 
 
 def test_rank_rejects_invalid_ranking_json(tmp_path, capsys):
@@ -892,132 +890,7 @@ def test_denied_context_decision_leaves_experiment_needing_human_review(tmp_path
     assert updated.selected_experiments[0].disposition == "needs_human_review"
 
 
-def test_section_approval_flow_marks_final_write_ready(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    assert main(["--repo", str(repo), "init"]) == 0
-    state = load_state(repo / ".paperium" / "state.json")
-    state.ranking.approved = True
-    state.question_focus.approved = True
-    state.expected_section_ids = ["q001-answer"]
-    save_state(repo / ".paperium" / "state.json", state)
-    section = repo / ".paperium" / "sections" / "q001-answer.md"
-    section.parent.mkdir(parents=True)
-    section.write_text("# Q001\n\nThe answer is short.\n", encoding="utf-8")
-    (repo / ".paperium" / "sections" / "q001-answer.review.json").write_text(
-        '{"status": "passed", "findings": []}', encoding="utf-8"
-    )
-
-    assert (
-        main(
-            [
-                "--repo",
-                str(repo),
-                "section",
-                "approve",
-                "q001-answer",
-                "--title",
-                "Q001",
-                "--path",
-                ".paperium/sections/q001-answer.md",
-            ]
-        )
-        == 0
-    )
-
-    ready = load_state(repo / ".paperium" / "state.json")
-    assert ready.sections[0].status == "approved"
-    assert ready.sections[0].factual_review_status == "passed"
-    assert ready.final_write.status == "ready"
-
-
-def test_section_skip_records_skipped_section_but_does_not_write_all_skipped_paper(
-    tmp_path,
-):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    assert main(["--repo", str(repo), "init"]) == 0
-    state = load_state(repo / ".paperium" / "state.json")
-    state.ranking.approved = True
-    state.question_focus.approved = True
-    state.expected_section_ids = ["q001-answer"]
-    save_state(repo / ".paperium" / "state.json", state)
-
-    assert (
-        main(
-            [
-                "--repo",
-                str(repo),
-                "section",
-                "skip",
-                "q001-answer",
-                "--title",
-                "Q001",
-            ]
-        )
-        == 0
-    )
-
-    skipped = load_state(repo / ".paperium" / "state.json")
-    assert skipped.sections[0].status == "skipped"
-    assert skipped.final_write.status != "ready"
-
-
-def test_write_uses_expected_section_order_and_rejects_unexpected_approved_sections(
-    tmp_path, capsys
-):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    assert main(["--repo", str(repo), "init"]) == 0
-    sections_dir = repo / ".paperium" / "sections"
-    sections_dir.mkdir(parents=True)
-    (sections_dir / "a.md").write_text("# A\n", encoding="utf-8")
-    (sections_dir / "b.md").write_text("# B\n", encoding="utf-8")
-    (sections_dir / "old.md").write_text("# Old\n", encoding="utf-8")
-    state = load_state(repo / ".paperium" / "state.json")
-    state.ranking.approved = True
-    state.question_focus.approved = True
-    state.expected_section_ids = ["b", "a"]
-    state.sections = [
-        SectionState(
-            id="a",
-            title="A",
-            path=".paperium/sections/a.md",
-            status="approved",
-            factual_review_status="passed",
-            factual_review_result_path=".paperium/sections/a.review.json",
-        ),
-        SectionState(
-            id="b",
-            title="B",
-            path=".paperium/sections/b.md",
-            status="approved",
-            factual_review_status="passed",
-            factual_review_result_path=".paperium/sections/b.review.json",
-        ),
-        SectionState(
-            id="old",
-            title="Old",
-            path=".paperium/sections/old.md",
-            status="approved",
-            factual_review_status="passed",
-            factual_review_result_path=".paperium/sections/old.review.json",
-        ),
-    ]
-    state.final_write.status = "ready"
-    save_state(repo / ".paperium" / "state.json", state)
-
-    assert main(["--repo", str(repo), "write"]) == 2
-    assert "unexpected approved section" in capsys.readouterr().err
-
-    state.sections = [section for section in state.sections if section.id != "old"]
-    save_state(repo / ".paperium" / "state.json", state)
-
-    assert main(["--repo", str(repo), "write"]) == 0
-    assert (repo / "PAPER.md").read_text(encoding="utf-8") == "# B\n\n# A\n"
-
-
-def test_command_surface_lists_v1_commands(capsys):
+def test_command_surface_lists_v2_commands(capsys):
     assert main(["--help"]) == 0
     output = capsys.readouterr().out
     for command in [
@@ -1029,9 +902,11 @@ def test_command_surface_lists_v1_commands(capsys):
         "approve",
         "context",
         "section",
-        "write",
+        "assemble",
+        "reconcile",
     ]:
         assert command in output
+    assert "write" not in output
 
 
 def test_init_creates_state_and_gitignore(tmp_path, capsys):

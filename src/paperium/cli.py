@@ -3,11 +3,15 @@ import sys
 from pathlib import Path
 
 import paperium.analyze
+import paperium.assemble
 import paperium.commands
 import paperium.output
+import paperium.reconcile
+import paperium.sections
 import paperium.selection
 import paperium.templates
 from paperium.gitignore import ensure_paperium_gitignore
+from paperium.notes import extract_notes
 from paperium.output import format_status_plain
 from paperium.paths import PaperiumPaths
 from paperium.repo import RepoError, resolve_repo
@@ -41,14 +45,26 @@ def build_parser() -> argparse.ArgumentParser:
         action_parser.add_argument("request_id")
     section_parser = subparsers.add_parser("section")
     section_subparsers = section_parser.add_subparsers(dest="section_action")
-    section_approve = section_subparsers.add_parser("approve")
-    section_approve.add_argument("section_id")
-    section_approve.add_argument("--title", required=True)
-    section_approve.add_argument("--path", required=True)
-    section_skip = section_subparsers.add_parser("skip")
-    section_skip.add_argument("section_id")
-    section_skip.add_argument("--title", required=True)
-    subparsers.add_parser("write")
+    section_add = section_subparsers.add_parser("add")
+    section_add.add_argument("section_id")
+    section_add.add_argument("--title", required=True)
+    section_add.add_argument("--order", type=int, default=None)
+    section_add.add_argument("--break-before", action="store_true", dest="break_before")
+    section_subparsers.add_parser("list")
+    for name in ("drop", "approve", "notes", "prompt"):
+        simple = section_subparsers.add_parser(name)
+        simple.add_argument("section_id")
+    section_record = section_subparsers.add_parser("record")
+    section_record.add_argument("section_id")
+    section_record.add_argument("--approve", action="store_true")
+    section_run = section_subparsers.add_parser("run")
+    section_run.add_argument("section_id")
+    section_run.add_argument("--backend", choices=["claude", "codex"], default="claude")
+    assemble_parser = subparsers.add_parser("assemble")
+    assemble_parser.add_argument("--allow-draft", action="store_true", dest="allow_draft")
+    assemble_parser.add_argument("--force", action="store_true")
+    reconcile_parser = subparsers.add_parser("reconcile")
+    reconcile_parser.add_argument("--fix", action="store_true")
     return parser
 
 
@@ -249,59 +265,97 @@ def _run_context(repo: Path, action: str | None, request_id: str | None) -> int:
     return SUCCESS
 
 
-def _run_section(
-    repo: Path,
-    action: str | None,
-    section_id: str | None,
-    *,
-    title: str | None,
-    section_path: str | None,
-) -> int:
-    if action is None or section_id is None:
-        print("paperium: section requires approve|skip and section-id", file=sys.stderr)
+def _run_section_v2(repo: Path, args: argparse.Namespace) -> int:
+    action = args.section_action
+    if action is None:
+        print("paperium: section requires a subcommand", file=sys.stderr)
         return INVALID_INVOCATION
     loaded = _load_state_for_command(repo)
     if isinstance(loaded, int):
         return loaded
     state_path, state = loaded
     try:
-        if action == "approve":
-            if title is None or section_path is None:
-                print("paperium: section approve requires --title and --path", file=sys.stderr)
-                return INVALID_INVOCATION
-            paperium.commands.approve_section(
+        if action == "add":
+            paperium.sections.add_section(
                 repo,
                 state,
-                section_id,
-                title=title,
-                section_path=section_path,
+                args.section_id,
+                title=args.title,
+                order=args.order,
+                break_before=args.break_before,
             )
-        elif action == "skip":
-            if title is None:
-                print("paperium: section skip requires --title", file=sys.stderr)
-                return INVALID_INVOCATION
-            paperium.commands.skip_section(state, section_id, title=title)
+        elif action == "list":
+            for section in sorted(state.sections, key=lambda item: (item.order, item.id)):
+                print(
+                    f"{section.order:>3}  {section.id}  {section.status}"
+                    f"  rounds={section.revision_rounds}  {section.title}"
+                )
+        elif action == "drop":
+            paperium.sections.drop_section(state, args.section_id)
+        elif action == "approve":
+            paperium.sections.approve_section_v2(state, args.section_id)
+        elif action == "record":
+            paperium.sections.record_section(repo, state, args.section_id, approve=args.approve)
+        elif action == "notes":
+            section = paperium.sections.find_section(state, args.section_id)
+            draft = repo / section.path
+            text = draft.read_text(encoding="utf-8") if draft.exists() else ""
+            for index, note in enumerate(extract_notes(text), start=1):
+                print(f"{index}. {note}")
+        elif action == "prompt":
+            archive, prompt = paperium.sections.prepare_prompt(repo, state, args.section_id)
+            print(prompt)
+            print(f"archived: {archive.relative_to(repo).as_posix()}", file=sys.stderr)
+        elif action == "run":
+            section = paperium.sections.run_section(
+                repo, state, args.section_id, backend=args.backend
+            )
+            if section.last_run_failed is not None:
+                save_state(state_path, state)
+                print(
+                    f"paperium: section run failed: {section.last_run_failed}",
+                    file=sys.stderr,
+                )
+                return DETERMINISTIC_FAILURE
         else:
             print(f"paperium: unknown section action: {action}", file=sys.stderr)
             return INVALID_INVOCATION
-    except paperium.commands.CommandError as exc:
+    except paperium.sections.SectionError as exc:
         print(f"paperium: {exc}", file=sys.stderr)
         return DETERMINISTIC_FAILURE
     save_state(state_path, state)
     return SUCCESS
 
 
-def _run_write(repo: Path) -> int:
+def _run_assemble(repo: Path, *, allow_draft: bool, force: bool) -> int:
     loaded = _load_state_for_command(repo)
     if isinstance(loaded, int):
         return loaded
     state_path, state = loaded
     try:
-        paperium.commands.write_paper(repo, state)
-    except paperium.commands.CommandError as exc:
+        target = paperium.assemble.assemble_report(
+            repo, state, allow_draft=allow_draft, force=force
+        )
+    except paperium.assemble.AssembleError as exc:
         print(f"paperium: {exc}", file=sys.stderr)
         return DETERMINISTIC_FAILURE
     save_state(state_path, state)
+    print(f"Assembled: {target.relative_to(repo).as_posix()}")
+    return SUCCESS
+
+
+def _run_reconcile(repo: Path, *, fix: bool) -> int:
+    loaded = _load_state_for_command(repo)
+    if isinstance(loaded, int):
+        return loaded
+    state_path, state = loaded
+    drift = paperium.reconcile.reconcile_state(repo, state, fix=fix)
+    for message in drift:
+        print(message)
+    if fix:
+        save_state(state_path, state)
+    if not drift:
+        print("no drift")
     return SUCCESS
 
 
@@ -360,14 +414,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "context":
         return _run_context(repo, args.context_action, getattr(args, "request_id", None))
     if args.command == "section":
-        return _run_section(
-            repo,
-            args.section_action,
-            getattr(args, "section_id", None),
-            title=getattr(args, "title", None),
-            section_path=getattr(args, "path", None),
-        )
-    if args.command == "write":
-        return _run_write(repo)
+        return _run_section_v2(repo, args)
+    if args.command == "assemble":
+        return _run_assemble(repo, allow_draft=args.allow_draft, force=args.force)
+    if args.command == "reconcile":
+        return _run_reconcile(repo, fix=args.fix)
     parser.print_help()
     return INVALID_INVOCATION

@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from paperium.analyze import FactCheckError, load_fact_check_result
 from paperium.context_requests import (
     ContextRequestError,
     validate_requested_paths,
@@ -19,10 +17,9 @@ from paperium.question_focus import (
     write_question_focus,
 )
 from paperium.ranking import RankingError, validate_ranking_entries, write_ranking_artifacts
-from paperium.state import ContextRequestState, PaperiumState, SectionState, WorkerRecord
+from paperium.state import ContextRequestState, PaperiumState, WorkerRecord
 from paperium.worker_runner import run_worker
 from paperium.workers import WorkerSpec, build_worker_record, worker_id_for
-from paperium.writing import can_write_paper, render_paper
 
 WORKER_TIMEOUT_SECONDS = 1800
 
@@ -98,14 +95,8 @@ def run_rank(repo: Path, state: PaperiumState, *, generate: bool) -> None:
         validated_focus,
     )
     _write_dispositions(repo, state, validated_ranking)
-    state.expected_section_ids = [
-        _section_id_for(entry["question_path"]) for entry in validated_focus
-    ]
     state.ranking.approved = False
     state.question_focus.approved = False
-    state.sections = []
-    state.final_write.status = "not_started"
-    state.final_write.written_at = None
     state.phase = "mapping"
 
 
@@ -158,84 +149,6 @@ def decide_context(repo: Path, state: PaperiumState, request_id: str, *, approve
     path = _repo_path(repo.resolve(), request.decision_path, field_name="context decision path")
     write_context_decision(path, request_id, approved)
     request.status = "approved" if approved else "denied"
-
-
-def approve_section(
-    repo: Path,
-    state: PaperiumState,
-    section_id: str,
-    *,
-    title: str,
-    section_path: str,
-) -> None:
-    _require_mapping_approved(state)
-    _require_expected_section(state, section_id)
-    repo = repo.resolve()
-    section_file = _repo_path(repo, section_path, field_name="section path")
-    if not section_file.exists():
-        raise CommandError(f"section file missing: {section_path}")
-
-    review_path = f".paperium/sections/{section_id}.review.json"
-    review_file = _repo_path(repo, review_path, field_name="section review path")
-    if not review_file.exists():
-        raise CommandError(f"section review missing: {review_path}")
-    try:
-        result = load_fact_check_result(review_file)
-    except FactCheckError as exc:
-        raise CommandError(f"section review is invalid: {exc}") from exc
-    if result.status != "passed":
-        raise CommandError("section review has not passed")
-
-    _upsert_section(
-        state,
-        SectionState(
-            id=section_id,
-            title=title,
-            path=_safe_repo_relative(section_path, field_name="section path"),
-            status="approved",
-            factual_review_status="passed",
-            factual_review_result_path=review_path,
-        ),
-    )
-    _recompute_final_write_status(state)
-
-
-def skip_section(state: PaperiumState, section_id: str, *, title: str) -> None:
-    _require_mapping_approved(state)
-    _require_expected_section(state, section_id)
-    _upsert_section(
-        state,
-        SectionState(
-            id=section_id,
-            title=title,
-            path="",
-            status="skipped",
-            factual_review_status="not_started",
-            factual_review_result_path=None,
-        ),
-    )
-    _recompute_final_write_status(state)
-
-
-def write_paper(repo: Path, state: PaperiumState) -> None:
-    if not (state.ranking.approved and state.question_focus.approved):
-        raise CommandError("ranking and question focus are not approved")
-    if state.final_write.status != "ready" or not can_write_paper(
-        [section.to_dict() for section in state.sections],
-        final_write_status=state.final_write.status,
-    ):
-        raise CommandError("sections are not approved")
-
-    ordered_sections = _ordered_writable_sections(state)
-    repo = repo.resolve()
-    section_paths = [
-        _repo_path(repo, section.path, field_name="section path") for section in ordered_sections
-    ]
-    paper_path = _repo_path(repo, state.final_write.paper_path, field_name="paper path")
-    paper_path.write_text(render_paper(section_paths), encoding="utf-8")
-    state.final_write.status = "written"
-    state.final_write.written_at = datetime.now(UTC).replace(microsecond=0).isoformat()
-    state.phase = "complete"
 
 
 def _approved_experiment_paths(state: PaperiumState) -> list[str]:
@@ -371,83 +284,6 @@ def _find_context_request(state: PaperiumState, request_id: str) -> ContextReque
     raise CommandError(f"unknown context request: {request_id}")
 
 
-def _require_mapping_approved(state: PaperiumState) -> None:
-    if not (state.ranking.approved and state.question_focus.approved):
-        raise CommandError("ranking and question focus are not approved")
-
-
-def _require_expected_section(state: PaperiumState, section_id: str) -> None:
-    if section_id not in state.expected_section_ids:
-        raise CommandError(f"unexpected section id: {section_id}")
-
-
-def _upsert_section(state: PaperiumState, section: SectionState) -> None:
-    for index, existing in enumerate(state.sections):
-        if existing.id == section.id:
-            state.sections[index] = section
-            return
-    state.sections.append(section)
-
-
-def _recompute_final_write_status(state: PaperiumState) -> None:
-    by_id = {section.id: section for section in state.sections}
-    if not state.expected_section_ids:
-        state.final_write.status = "not_started"
-        return
-    expected = [by_id.get(section_id) for section_id in state.expected_section_ids]
-    if any(section is None for section in expected):
-        state.final_write.status = "not_started"
-        return
-    if not any(section.status == "approved" for section in expected if section is not None):
-        state.final_write.status = "not_started"
-        return
-    if all(
-        section is not None
-        and (
-            section.status == "skipped"
-            or (
-                section.status == "approved"
-                and section.factual_review_status == "passed"
-                and section.factual_review_result_path
-            )
-        )
-        for section in expected
-    ):
-        state.final_write.status = "ready"
-        state.phase = "reviewing"
-    else:
-        state.final_write.status = "not_started"
-
-
-def _ordered_writable_sections(state: PaperiumState) -> list[SectionState]:
-    expected = list(state.expected_section_ids)
-    by_id = {section.id: section for section in state.sections}
-    unexpected = [
-        section.id
-        for section in state.sections
-        if section.id not in expected and section.status == "approved"
-    ]
-    if unexpected:
-        raise CommandError(f"unexpected approved section: {', '.join(sorted(unexpected))}")
-
-    ordered: list[SectionState] = []
-    for section_id in expected:
-        section = by_id.get(section_id)
-        if section is None:
-            raise CommandError(f"section is not approved: {section_id}")
-        if section.status == "skipped":
-            continue
-        if section.status != "approved" or section.factual_review_status != "passed":
-            raise CommandError(f"section is not approved: {section_id}")
-        if not section.factual_review_result_path:
-            raise CommandError(f"section review is missing: {section_id}")
-        ordered.append(section)
-
-    if not ordered:
-        raise CommandError("sections are not approved")
-    return ordered
-
-
 def _json_entries(data: Any, field: str, *, artifact_name: str) -> list[Any]:
     if not isinstance(data, dict) or field not in data:
         raise CommandError(f"{artifact_name} is invalid: missing {field}")
@@ -492,8 +328,3 @@ def _safe_repo_relative(value: Any, *, field_name: str) -> str:
     if any(part in {"", ".", ".."} for part in value.split("/")):
         raise CommandError(f"unsafe {field_name}: {value}")
     return value
-
-
-def _section_id_for(question_path: str) -> str:
-    section_id = re.sub(r"[^A-Za-z0-9]+", "-", question_path).strip("-").lower()
-    return section_id or "section"
