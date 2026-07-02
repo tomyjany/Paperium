@@ -5,7 +5,7 @@ description: Use when running the Paperium V2 agent-led workflow that turns sele
 
 # Paperium Writer
 
-Read `docs/superpowers/specs/2026-06-28-paperium-ai-writer-v1-design.md` before acting.
+Read `docs/superpowers/specs/2026-07-02-paperium-v2-sections-workbench-design.md` before acting.
 
 Workflow:
 1. Run `paperium --repo <repo> init`.
