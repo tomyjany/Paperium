@@ -159,7 +159,7 @@ Auto-selected when a non-empty draft exists.
 
 ### Details
 
-- Prompts are archived before the run; history is automatic.
+- Prompts are archived before the run; history is automatic. The archive round number is `revision_rounds + 1` at prompt-build time (round 1 = initial draft); `revision_rounds` itself is bumped only when a draft round lands (`section record` or a successful `section run`), so re-emitting a prompt without running it overwrites the same round file rather than inflating the count.
 - The writer worker needs no repository read access: everything it may use is in the prompt. Repository reading remains the analysis workers' job.
 - Note syntax is `/.../` anywhere in a line, matching existing user practice. The extractor is a deliberately simple regex over `/...text.../` spans; ambiguous matches simply appear in `section notes` output for the user to inspect before running.
 - After a successful revision the new draft replaces the old one, consuming the notes. Any note the writer left in place shows up as still pending in `section notes`.
