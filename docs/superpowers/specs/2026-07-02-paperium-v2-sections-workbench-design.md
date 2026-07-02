@@ -109,7 +109,7 @@ Each step usable alone; `run` is the one-shot combination.
 
 ### Assembly and Hygiene
 
-- `paperium assemble [--allow-draft]` — concatenate approved sections by `order` into `REPORT.md` through the export template; refuse if any non-dropped section is unapproved (unless `--allow-draft`); validate referenced images; atomic write; set `report.stale = false` and record `content_hash`.
+- `paperium assemble [--allow-draft]` — concatenate approved sections by `order` into `REPORT.md` through the export template; refuse if any non-dropped section is unapproved. With `--allow-draft`, include unapproved sections but write to `.paperium/REPORT.draft.md` instead — `REPORT.md`, `report.content_hash`, and `report.stale` are never touched by a draft assembly, so incomplete output can never masquerade as the final artifact. Both modes validate referenced images and write atomically; only a full (all-approved) assembly updates `report` state.
 - `paperium reconcile [--fix]` — scan `.paperium/sections/*` against state; report drift (files without records, records without files, drafts newer than the recorded round, report staleness). `--fix` updates state to match disk. Never deletes files.
 - `paperium status` — extended with the section table and report staleness.
 
@@ -188,7 +188,7 @@ All tests LLM-free, following existing `tests/paperium/` conventions:
 - section registry CRUD, ordering, `dropped` exclusion, `break_before`;
 - note extraction: multiple notes per line/file, notes inside tables, no notes, unterminated markers;
 - prompt builder golden tests: initial vs revision selection, fact-lock presence, facts/style verbatim injection, archive naming (`round<N>`);
-- assemble golden test: fixture sections produce byte-stable `REPORT.md`; unapproved-section refusal; `--allow-draft`; missing-image failure; hand-edit hash warning and `--force`;
+- assemble golden test: fixture sections produce byte-stable `REPORT.md`; unapproved-section refusal; `--allow-draft` writes `REPORT.draft.md` and leaves `REPORT.md` and `report` state untouched; missing-image failure; hand-edit hash warning and `--force`;
 - reconcile drift matrix: file-without-record, record-without-file, draft newer than recorded round, staleness reporting, `--fix` behavior;
 - `section run` with a fake worker: success, failure, timeout, draft preservation, `last_run_failed` recording;
 - CLI surface test covering the new subcommands.
