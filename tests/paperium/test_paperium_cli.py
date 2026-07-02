@@ -1178,3 +1178,17 @@ def test_status_invalid_state_returns_failure(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "invalid state" in captured.err
     assert captured.out == ""
+
+
+def test_init_scaffolds_style_and_report_template(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["--repo", str(repo), "init"]) == 0
+    style = (repo / ".paperium/style.md").read_text()
+    template = (repo / ".paperium/report-template.md").read_text()
+    assert "Terminology" in style
+    assert "{{sections}}" in template
+    # idempotent: user edits survive re-init
+    (repo / ".paperium/style.md").write_text("user edited")
+    assert main(["--repo", str(repo), "init"]) == 0
+    assert (repo / ".paperium/style.md").read_text() == "user edited"

@@ -6,6 +6,7 @@ import paperium.analyze
 import paperium.commands
 import paperium.output
 import paperium.selection
+import paperium.templates
 from paperium.gitignore import ensure_paperium_gitignore
 from paperium.output import format_status_plain
 from paperium.paths import PaperiumPaths
@@ -86,6 +87,8 @@ def _run_init(repo: Path) -> int:
     state_path = _state_path(repo)
     if not state_path.exists():
         save_state(state_path, PaperiumState())
+
+    paperium.templates.ensure_scaffolds(repo)
 
     print(f"Repository: {repo}")
     print(f"State: {state_path}")
