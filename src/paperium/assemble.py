@@ -67,15 +67,11 @@ def assemble_report(
             and sha256(target.read_bytes()).hexdigest() != state.report.content_hash
             and not force
         ):
-            raise AssembleError(
-                f"{state.report.path} looks hand-edited; use --force to overwrite"
-            )
+            raise AssembleError(f"{state.report.path} looks hand-edited; use --force to overwrite")
 
     _atomic_write(target, text)
     if not allow_draft:
-        state.report.assembled_at = (
-            datetime.now(UTC).replace(microsecond=0).isoformat()
-        )
+        state.report.assembled_at = datetime.now(UTC).replace(microsecond=0).isoformat()
         state.report.content_hash = sha256(text.encode("utf-8")).hexdigest()
         state.report.stale = False
     return target

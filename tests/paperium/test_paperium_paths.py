@@ -31,10 +31,7 @@ def test_named_artifact_paths(tmp_path):
         == repo / ".paperium/context-requests/request-001.decision.json"
     )
     assert paths.section_path("abstract") == repo / ".paperium/sections/abstract.md"
-    assert (
-        paths.section_review_path("abstract")
-        == repo / ".paperium/sections/abstract.review.json"
-    )
+    assert paths.section_review_path("abstract") == repo / ".paperium/sections/abstract.review.json"
 
 
 def test_v2_paths(tmp_path):

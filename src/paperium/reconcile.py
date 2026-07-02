@@ -14,11 +14,11 @@ def reconcile_state(repo: Path, state: PaperiumState, *, fix: bool = False) -> l
     drift: list[str] = []
 
     known_paths = {section.path for section in state.sections}
-    draft_files = sorted(
-        path
-        for path in sections_dir.glob("*.md")
-        if not path.name.endswith(".facts.md")
-    ) if sections_dir.exists() else []
+    draft_files = (
+        sorted(path for path in sections_dir.glob("*.md") if not path.name.endswith(".facts.md"))
+        if sections_dir.exists()
+        else []
+    )
 
     for draft in draft_files:
         relative = draft.relative_to(repo).as_posix()
@@ -33,9 +33,7 @@ def reconcile_state(repo: Path, state: PaperiumState, *, fix: bool = False) -> l
                     id=section_id,
                     title=section_id,
                     path=relative,
-                    facts_path=paths.section_facts_path(section_id)
-                    .relative_to(repo)
-                    .as_posix(),
+                    facts_path=paths.section_facts_path(section_id).relative_to(repo).as_posix(),
                     status="draft",
                     revision_rounds=1,
                     order=order,

@@ -74,8 +74,7 @@ def test_dropped_sections_are_excluded(tmp_path):
 def test_missing_images_fail_with_listing(tmp_path):
     repo, state = _repo_with_sections(tmp_path)
     (repo / ".paperium/sections/s1.md").write_text(
-        "![diagram](.paperium/images/missing-a.png)\n"
-        '<img src=".paperium/images/missing-b.png">\n'
+        '![diagram](.paperium/images/missing-a.png)\n<img src=".paperium/images/missing-b.png">\n'
     )
     with pytest.raises(AssembleError) as excinfo:
         assemble_report(repo, state)

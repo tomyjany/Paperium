@@ -1,8 +1,6 @@
 from paperium.notes import extract_notes
 
-FACT_LOCK = (
-    "Keep all numbers, table rows, and claims unchanged unless a user note explicitly asks."
-)
+FACT_LOCK = "Keep all numbers, table rows, and claims unchanged unless a user note explicitly asks."
 
 _OUTPUT_CONTRACT = (
     "Output only the final Markdown section. Write it to the output file below.\n"
@@ -47,9 +45,7 @@ def _initial_prompt(*, title: str, facts: str, style: str, output_path: str) -> 
     )
 
 
-def _revision_prompt(
-    *, title: str, facts: str, style: str, output_path: str, draft: str
-) -> str:
+def _revision_prompt(*, title: str, facts: str, style: str, output_path: str, draft: str) -> str:
     notes = extract_notes(draft)
     numbered = [f"{index}. {note}" for index, note in enumerate(notes, start=1)]
     return "\n".join(
