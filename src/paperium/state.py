@@ -435,7 +435,7 @@ def load_state(path: str | Path) -> PaperiumState:
         raise StateError(f"invalid state JSON: {exc}") from exc
     if isinstance(data, dict) and data.get("schema_version") == 1:
         backup = source.with_name("state.v1.backup.json")
-        if not backup.exists():
+        if not backup.exists() and not backup.is_symlink():
             shutil.copyfile(source, backup)
         data = migrate_v1_to_v2(data)
     return PaperiumState.from_dict(data)

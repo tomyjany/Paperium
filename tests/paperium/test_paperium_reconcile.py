@@ -76,3 +76,18 @@ def test_empty_stub_draft_is_not_drift(tmp_path):
     state = PaperiumState(phase="writing")
     state.sections.append(_section("s1", draft_hash=None, rounds=0))
     assert reconcile_state(repo, state) == []
+
+
+def test_manually_written_draft_without_recorded_round_is_drift_and_fixable(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / ".paperium/sections/s1.md").write_text("hand written content")
+    state = PaperiumState(phase="writing")
+    state.sections.append(_section("s1", draft_hash=None, rounds=0))
+    drift = reconcile_state(repo, state)
+    assert drift == ["section draft exists but no round recorded: s1"]
+    reconcile_state(repo, state, fix=True)
+    section = state.sections[0]
+    assert section.draft_hash == sha256(b"hand written content").hexdigest()
+    assert section.revision_rounds == 1
+    assert section.status == "draft"
+    assert reconcile_state(repo, state) == []

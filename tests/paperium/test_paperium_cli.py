@@ -1,4 +1,5 @@
 import json
+import re
 
 import paperium.analyze
 import paperium.output
@@ -906,7 +907,7 @@ def test_command_surface_lists_v2_commands(capsys):
         "reconcile",
     ]:
         assert command in output
-    assert "write" not in output
+    assert re.search(r"\bwrite\b", output) is None
 
 
 def test_init_creates_state_and_gitignore(tmp_path, capsys):

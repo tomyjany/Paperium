@@ -100,3 +100,58 @@ def test_hand_edit_requires_force(tmp_path):
         assemble_report(repo, state)
     assemble_report(repo, state, force=True)
     assert "hand edit" not in report.read_text()
+
+
+def test_preexisting_report_without_content_hash_requires_force(tmp_path):
+    repo, state = _repo_with_sections(tmp_path)
+    report = repo / ".paperium/REPORT.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("hand built report\n")
+    assert state.report.content_hash is None
+    with pytest.raises(AssembleError, match="paperium"):
+        assemble_report(repo, state)
+    assert report.read_text() == "hand built report\n"
+    assemble_report(repo, state, force=True)
+    assert "hand built report" not in report.read_text()
+
+
+def test_report_path_traversal_is_rejected(tmp_path):
+    repo, state = _repo_with_sections(tmp_path)
+    state.report.path = "/etc/passwd"
+    with pytest.raises(AssembleError):
+        assemble_report(repo, state)
+
+
+def test_section_path_traversal_is_rejected(tmp_path):
+    repo, state = _repo_with_sections(tmp_path)
+    state.sections[0].path = "../escape.md"
+    with pytest.raises(AssembleError):
+        assemble_report(repo, state)
+
+
+def test_markdown_image_with_title_is_validated(tmp_path):
+    repo, state = _repo_with_sections(tmp_path)
+    (repo / ".paperium/sections/s1.md").write_text(
+        '![diagram](.paperium/images/missing.png "a title")\n'
+    )
+    with pytest.raises(AssembleError) as excinfo:
+        assemble_report(repo, state)
+    assert "missing.png" in str(excinfo.value)
+
+
+def test_single_quoted_html_image_is_validated(tmp_path):
+    repo, state = _repo_with_sections(tmp_path)
+    (repo / ".paperium/sections/s1.md").write_text("<img src='.paperium/images/missing.png'>\n")
+    with pytest.raises(AssembleError) as excinfo:
+        assemble_report(repo, state)
+    assert "missing.png" in str(excinfo.value)
+
+
+def test_image_ref_escaping_repo_is_rejected_even_if_file_exists(tmp_path):
+    repo, state = _repo_with_sections(tmp_path)
+    outside = repo.parent / "outside.png"
+    outside.write_bytes(b"png")
+    (repo / ".paperium/sections/s1.md").write_text("![x](../outside.png)\n")
+    with pytest.raises(AssembleError) as excinfo:
+        assemble_report(repo, state)
+    assert "outside.png" in str(excinfo.value)

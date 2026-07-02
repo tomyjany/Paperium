@@ -37,3 +37,14 @@ def test_revision_prompt_has_fact_lock_notes_and_draft():
 def test_blank_draft_selects_initial_prompt():
     prompt = build_writer_prompt(title="T", facts="f", style="s", output_path="o.md", draft="  \n")
     assert "You are writing one section" in prompt
+
+
+def test_revision_prompt_falls_back_when_no_notes_present(tmp_path):
+    prompt = build_writer_prompt(
+        title="T",
+        facts="f",
+        style="s",
+        output_path="o.md",
+        draft="Plain draft with no inline notes.",
+    )
+    assert "(no inline notes found; improve per style only)" in prompt

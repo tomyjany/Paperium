@@ -46,6 +46,9 @@ def _initial_prompt(*, title: str, facts: str, style: str, output_path: str) -> 
 
 
 def _revision_prompt(*, title: str, facts: str, style: str, output_path: str, draft: str) -> str:
+    # `facts` is intentionally omitted here: FACT_LOCK instructs the writer to keep
+    # existing claims unchanged, and the current draft already carries the content;
+    # re-supplying facts would only invite drift between the two sources.
     notes = extract_notes(draft)
     numbered = [f"{index}. {note}" for index, note in enumerate(notes, start=1)]
     return "\n".join(

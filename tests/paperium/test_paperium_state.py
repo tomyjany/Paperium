@@ -91,6 +91,20 @@ def test_load_state_migrates_v1_with_one_time_backup(tmp_path):
     assert backup.read_text() == "sentinel"
 
 
+def test_load_state_v1_does_not_follow_broken_backup_symlink(tmp_path):
+    path = tmp_path / ".paperium/state.json"
+    path.parent.mkdir(parents=True)
+    v1 = {"schema_version": 1, "phase": "writing"}
+    path.write_text(json.dumps(v1))
+    backup = tmp_path / ".paperium/state.v1.backup.json"
+    target = tmp_path / ".paperium/nonexistent-target.json"
+    backup.symlink_to(target)
+    state = load_state(path)
+    assert state.schema_version == 2
+    assert not target.exists()
+    assert backup.is_symlink()
+
+
 def test_unknown_schema_version_fails(tmp_path):
     path = tmp_path / ".paperium/state.json"
     path.parent.mkdir(parents=True)

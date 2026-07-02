@@ -47,6 +47,13 @@ def reconcile_state(repo: Path, state: PaperiumState, *, fix: bool = False) -> l
             drift.append(f"section record without file: {section.id}")
             continue
         if section.draft_hash is None:
+            content = draft.read_bytes()
+            if content.strip():
+                drift.append(f"section draft exists but no round recorded: {section.id}")
+                if fix:
+                    section.draft_hash = sha256(content).hexdigest()
+                    section.revision_rounds = 1
+                    mark_report_stale(state)
             continue
         current = sha256(draft.read_bytes()).hexdigest()
         if current != section.draft_hash:

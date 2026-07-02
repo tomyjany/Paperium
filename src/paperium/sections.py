@@ -4,7 +4,7 @@ import os
 import re
 import tempfile
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from paperium.paths import PaperiumPaths
 from paperium.state import PaperiumState, SectionState, WorkerRecord
@@ -17,6 +17,28 @@ _SECTION_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 class SectionError(Exception):
     pass
+
+
+def safe_state_path(
+    repo: Path, value: object, field_name: str, exc_cls: type[Exception] = SectionError
+) -> Path:
+    """Resolve a path stored in state.json, rejecting anything that could escape the repo.
+
+    Rejects non-strings, empty values, absolute paths (POSIX or Windows-style),
+    backslashes, and any ``.``/``..``/empty path segment.
+    """
+    if not isinstance(value, str) or not value:
+        raise exc_cls(f"invalid {field_name}: {value!r}")
+    if "\\" in value:
+        raise exc_cls(f"invalid {field_name}: {value!r}")
+    if re.match(r"^[A-Za-z]:", value):
+        raise exc_cls(f"invalid {field_name}: {value!r}")
+    if PurePosixPath(value).is_absolute():
+        raise exc_cls(f"invalid {field_name}: {value!r}")
+    segments = value.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        raise exc_cls(f"invalid {field_name}: {value!r}")
+    return repo / value
 
 
 def find_section(state: PaperiumState, section_id: str) -> SectionState:
@@ -91,7 +113,7 @@ def record_section(
     approve: bool = False,
 ) -> SectionState:
     section = find_section(state, section_id)
-    draft_path = repo / section.path
+    draft_path = safe_state_path(repo, section.path, "section path")
     if not draft_path.exists() or not draft_path.read_text(encoding="utf-8").strip():
         raise SectionError(f"section draft is missing or empty: {section.path}")
     section.revision_rounds += 1
@@ -115,9 +137,9 @@ WRITE_TIMEOUT_SECONDS = 1800
 def prepare_prompt(repo: Path, state: PaperiumState, section_id: str) -> tuple[Path, str]:
     section = find_section(state, section_id)
     paths = PaperiumPaths(repo)
-    facts = _read_optional(repo / section.facts_path)
+    facts = _read_optional(safe_state_path(repo, section.facts_path, "section facts_path"))
     style = _read_optional(paths.style_path)
-    draft = _read_optional(repo / section.path)
+    draft = _read_optional(safe_state_path(repo, section.path, "section path"))
     worker_id = worker_id_for("write", section.path)
     prompt = build_writer_prompt(
         title=section.title,
@@ -145,6 +167,9 @@ def run_section(
     _, prompt = prepare_prompt(repo, state, section_id)
     worker_id = worker_id_for("write", section.path)
     worker_dir = f".paperium/workers/{worker_id}"
+    stale_output = repo / worker_dir / "output.md"
+    if stale_output.exists():
+        stale_output.unlink()
     spec = WorkerSpec(
         worker_id=worker_id,
         backend=backend,
@@ -178,7 +203,7 @@ def run_section(
         section.last_run_failed = "missing_output"
         return section
 
-    _promote_draft(output_path, repo / section.path)
+    _promote_draft(output_path, safe_state_path(repo, section.path, "section path"))
     return record_section(repo, state, section_id)
 
 

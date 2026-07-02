@@ -191,3 +191,71 @@ def test_run_section_missing_output_is_failure(tmp_path):
     section = run_section(repo, state, "ch1-s1", runner=empty_runner)
     assert section.last_run_failed == "missing_output"
     assert section.revision_rounds == 0
+
+
+def test_run_section_does_not_promote_stale_worker_output(tmp_path):
+    repo, state = _prepared_repo(tmp_path)
+
+    def writing_runner(run_repo, spec):
+        worker_dir = run_repo / ".paperium/workers" / spec.worker_id
+        worker_dir.mkdir(parents=True, exist_ok=True)
+        (worker_dir / "output.md").write_text("## Dataset\nround one\n")
+        return _fake_result(spec.worker_id, "succeeded")
+
+    section = run_section(repo, state, "ch1-s1", runner=writing_runner)
+    assert section.revision_rounds == 1
+    draft = repo / ".paperium/sections/ch1-s1.md"
+    assert "round one" in draft.read_text()
+
+    def silent_runner(run_repo, spec):
+        # Same deterministic worker_id/dir as before; writes nothing this time.
+        return _fake_result(spec.worker_id, "succeeded")
+
+    section = run_section(repo, state, "ch1-s1", runner=silent_runner)
+    assert section.last_run_failed == "missing_output"
+    assert section.revision_rounds == 1
+    assert "round one" in draft.read_text()
+
+
+def test_prepare_prompt_rejects_escaping_section_path(tmp_path):
+    repo, state = _prepared_repo(tmp_path)
+    state.sections[0].path = "../escape.md"
+    with pytest.raises(SectionError):
+        prepare_prompt(repo, state, "ch1-s1")
+
+
+def test_prepare_prompt_rejects_absolute_facts_path(tmp_path):
+    repo, state = _prepared_repo(tmp_path)
+    state.sections[0].facts_path = "/etc/passwd"
+    with pytest.raises(SectionError):
+        prepare_prompt(repo, state, "ch1-s1")
+
+
+def test_record_section_rejects_escaping_path(tmp_path):
+    repo, state = _prepared_repo(tmp_path)
+    state.sections[0].path = "../escape.md"
+    with pytest.raises(SectionError):
+        record_section(repo, state, "ch1-s1")
+
+
+def test_record_section_approve_sets_status_approved(tmp_path):
+    repo, state = _prepared_repo(tmp_path)
+    draft = repo / ".paperium/sections/ch1-s1.md"
+    draft.write_text("## Dataset\ntext\n")
+    section = record_section(repo, state, "ch1-s1", approve=True)
+    assert section.status == "approved"
+
+
+def test_record_section_clears_previous_failure(tmp_path):
+    repo, state = _prepared_repo(tmp_path)
+
+    def failing_runner(run_repo, spec):
+        return _fake_result(spec.worker_id, "failed", failure_reason="nonzero_exit:2")
+
+    run_section(repo, state, "ch1-s1", runner=failing_runner)
+    assert find_section(state, "ch1-s1").last_run_failed == "nonzero_exit:2"
+
+    draft = repo / ".paperium/sections/ch1-s1.md"
+    draft.write_text("## Dataset\ntext\n")
+    section = record_section(repo, state, "ch1-s1")
+    assert section.last_run_failed is None

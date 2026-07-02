@@ -5,14 +5,15 @@ import re
 import tempfile
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from paperium.paths import PaperiumPaths
+from paperium.sections import safe_state_path
 from paperium.state import PaperiumState
 
 PAGE_BREAK = '<div class="page-break"></div>'
-_MD_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")
-_HTML_IMAGE = re.compile(r"<img[^>]+src=\"([^\"]+)\"")
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+[^)]*)?\)")
+_HTML_IMAGE = re.compile(r"<img[^>]+src=[\"']([^\"']+)[\"']")
 
 
 class AssembleError(Exception):
@@ -47,7 +48,8 @@ def assemble_report(
     bodies: list[str] = []
     missing_images: list[str] = []
     for index, section in enumerate(sections):
-        body = (repo / section.path).read_text(encoding="utf-8").rstrip()
+        section_path = safe_state_path(repo, section.path, "section path", exc_cls=AssembleError)
+        body = section_path.read_text(encoding="utf-8").rstrip()
         missing_images.extend(_missing_images(repo, body))
         if section.break_before and index > 0:
             bodies.append(PAGE_BREAK)
@@ -60,14 +62,17 @@ def assemble_report(
     if allow_draft:
         target = paths.report_draft_path
     else:
-        target = repo / state.report.path
-        if (
-            target.exists()
-            and state.report.content_hash is not None
-            and sha256(target.read_bytes()).hexdigest() != state.report.content_hash
-            and not force
-        ):
-            raise AssembleError(f"{state.report.path} looks hand-edited; use --force to overwrite")
+        target = safe_state_path(repo, state.report.path, "report path", exc_cls=AssembleError)
+        if target.exists() and not force:
+            if state.report.content_hash is None:
+                raise AssembleError(
+                    f"{state.report.path} exists but was not assembled by paperium; "
+                    "use --force to overwrite"
+                )
+            if sha256(target.read_bytes()).hexdigest() != state.report.content_hash:
+                raise AssembleError(
+                    f"{state.report.path} looks hand-edited; use --force to overwrite"
+                )
 
     _atomic_write(target, text)
     if not allow_draft:
@@ -82,6 +87,10 @@ def _missing_images(repo: Path, body: str) -> list[str]:
     missing = []
     for reference in references:
         if reference.startswith(("http://", "https://", "data:")):
+            continue
+        ref_path = PurePosixPath(reference)
+        if ref_path.is_absolute() or ".." in ref_path.parts:
+            missing.append(reference)
             continue
         if not (repo / reference).exists():
             missing.append(reference)
