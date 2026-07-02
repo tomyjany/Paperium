@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PHASES = {
     "selecting",
     "analyzing",
@@ -15,8 +16,6 @@ PHASES = {
     "ranking",
     "mapping",
     "writing",
-    "reviewing",
-    "complete",
     "failed",
 }
 EXPERIMENT_STATUSES = {
@@ -48,15 +47,7 @@ WORKER_STATUSES = {
 BACKENDS = {"codex", "claude"}
 WORKER_ROLES = {"analyze", "fact_check", "rank", "write", "review"}
 CONTEXT_REQUEST_STATUSES = {"pending", "approved", "denied"}
-SECTION_STATUSES = {
-    "not_started",
-    "drafted",
-    "review_failed",
-    "approved",
-    "skipped",
-}
-FACTUAL_REVIEW_STATUSES = {"not_started", "passed", "failed"}
-FINAL_WRITE_STATUSES = {"not_started", "ready", "written", "failed"}
+SECTION_STATUSES = {"draft", "revised", "approved", "dropped"}
 
 
 class StateError(Exception):
@@ -281,24 +272,27 @@ class SectionState:
     id: str
     title: str
     path: str
-    status: str = "not_started"
-    factual_review_status: str = "not_started"
-    factual_review_result_path: str | None = None
+    facts_path: str
+    status: str = "draft"
+    revision_rounds: int = 0
+    order: int = 0
+    break_before: bool = False
+    draft_hash: str | None = None
+    last_run_failed: str | None = None
 
     def __post_init__(self) -> None:
         _validate_enum("section status", self.status, SECTION_STATUSES)
-        _validate_enum(
-            "section factual review status",
-            self.factual_review_status,
-            FACTUAL_REVIEW_STATUSES,
-        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "factual_review_result_path": self.factual_review_result_path,
-            "factual_review_status": self.factual_review_status,
+            "break_before": self.break_before,
+            "draft_hash": self.draft_hash,
+            "facts_path": self.facts_path,
             "id": self.id,
+            "last_run_failed": self.last_run_failed,
+            "order": self.order,
             "path": self.path,
+            "revision_rounds": self.revision_rounds,
             "status": self.status,
             "title": self.title,
         }
@@ -311,37 +305,41 @@ class SectionState:
                 id=data["id"],
                 title=data["title"],
                 path=data["path"],
-                status=data.get("status", "not_started"),
-                factual_review_status=data.get("factual_review_status", "not_started"),
-                factual_review_result_path=data.get("factual_review_result_path"),
+                facts_path=data["facts_path"],
+                status=data.get("status", "draft"),
+                revision_rounds=data.get("revision_rounds", 0),
+                order=data.get("order", 0),
+                break_before=data.get("break_before", False),
+                draft_hash=data.get("draft_hash"),
+                last_run_failed=data.get("last_run_failed"),
             )
         except KeyError as exc:
             raise StateError(f"missing section field: {exc.args[0]}") from exc
 
 
 @dataclass
-class FinalWriteState:
-    paper_path: str = "PAPER.md"
-    status: str = "not_started"
-    written_at: str | None = None
-
-    def __post_init__(self) -> None:
-        _validate_enum("final write status", self.status, FINAL_WRITE_STATUSES)
+class ReportState:
+    path: str = ".paperium/REPORT.md"
+    assembled_at: str | None = None
+    content_hash: str | None = None
+    stale: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "paper_path": self.paper_path,
-            "status": self.status,
-            "written_at": self.written_at,
+            "assembled_at": self.assembled_at,
+            "content_hash": self.content_hash,
+            "path": self.path,
+            "stale": self.stale,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FinalWriteState:
-        data = _expect_mapping(data, "final write")
+    def from_dict(cls, data: dict[str, Any]) -> ReportState:
+        data = _expect_mapping(data, "report")
         return cls(
-            paper_path=data.get("paper_path", "PAPER.md"),
-            status=data.get("status", "not_started"),
-            written_at=data.get("written_at"),
+            path=data.get("path", ".paperium/REPORT.md"),
+            assembled_at=data.get("assembled_at"),
+            content_hash=data.get("content_hash"),
+            stale=data.get("stale", False),
         )
 
 
@@ -356,8 +354,7 @@ class PaperiumState:
     question_focus: QuestionFocusState = field(default_factory=QuestionFocusState)
     context_requests: list[ContextRequestState] = field(default_factory=list)
     sections: list[SectionState] = field(default_factory=list)
-    expected_section_ids: list[str] = field(default_factory=list)
-    final_write: FinalWriteState = field(default_factory=FinalWriteState)
+    report: ReportState = field(default_factory=ReportState)
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
@@ -368,11 +365,10 @@ class PaperiumState:
         return {
             "context_requests": [request.to_dict() for request in self.context_requests],
             "dispositions_path": self.dispositions_path,
-            "expected_section_ids": self.expected_section_ids,
-            "final_write": self.final_write.to_dict(),
             "phase": self.phase,
             "question_focus": self.question_focus.to_dict(),
             "ranking": self.ranking.to_dict(),
+            "report": self.report.to_dict(),
             "schema_version": self.schema_version,
             "sections": [section.to_dict() for section in self.sections],
             "selected_experiments": [
@@ -411,19 +407,37 @@ class PaperiumState:
                 SectionState.from_dict(section)
                 for section in _list_value(data.get("sections", []), "sections")
             ],
-            expected_section_ids=_list_of_strings(
-                data.get("expected_section_ids", []), "expected_section_ids"
-            ),
-            final_write=FinalWriteState.from_dict(data.get("final_write", {})),
+            report=ReportState.from_dict(data.get("report", {})),
         )
 
 
+def migrate_v1_to_v2(data: dict[str, Any]) -> dict[str, Any]:
+    data = dict(data)
+    data["schema_version"] = 2
+    phase = data.get("phase", "selecting")
+    if phase in {"reviewing", "complete"}:
+        phase = "writing"
+    data["phase"] = phase
+    data.pop("expected_section_ids", None)
+    data.pop("final_write", None)
+    # v1 section records have an incompatible shape and were empty in practice
+    data["sections"] = []
+    data["report"] = {}
+    return data
+
+
 def load_state(path: str | Path) -> PaperiumState:
+    source = Path(path)
     try:
-        with Path(path).open(encoding="utf-8") as handle:
+        with source.open(encoding="utf-8") as handle:
             data = json.load(handle)
     except json.JSONDecodeError as exc:
         raise StateError(f"invalid state JSON: {exc}") from exc
+    if isinstance(data, dict) and data.get("schema_version") == 1:
+        backup = source.with_name("state.v1.backup.json")
+        if not backup.exists():
+            shutil.copyfile(source, backup)
+        data = migrate_v1_to_v2(data)
     return PaperiumState.from_dict(data)
 
 
