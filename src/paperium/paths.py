@@ -54,3 +54,25 @@ class PaperiumPaths:
 
     def section_review_path(self, section_id: str) -> Path:
         return self.root_dir / "sections" / f"{section_id}.review.json"
+
+    @property
+    def style_path(self) -> Path:
+        return self.root_dir / "style.md"
+
+    @property
+    def report_template_path(self) -> Path:
+        return self.root_dir / "report-template.md"
+
+    @property
+    def report_path(self) -> Path:
+        return self.root_dir / "REPORT.md"
+
+    @property
+    def report_draft_path(self) -> Path:
+        return self.root_dir / "REPORT.draft.md"
+
+    def section_facts_path(self, section_id: str) -> Path:
+        return self.root_dir / "sections" / f"{section_id}.facts.md"
+
+    def section_prompt_path(self, section_id: str, round_number: int) -> Path:
+        return self.root_dir / "prompts" / f"{section_id}.round{round_number}.prompt.md"

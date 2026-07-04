@@ -31,7 +31,15 @@ def test_named_artifact_paths(tmp_path):
         == repo / ".paperium/context-requests/request-001.decision.json"
     )
     assert paths.section_path("abstract") == repo / ".paperium/sections/abstract.md"
-    assert (
-        paths.section_review_path("abstract")
-        == repo / ".paperium/sections/abstract.review.json"
-    )
+    assert paths.section_review_path("abstract") == repo / ".paperium/sections/abstract.review.json"
+
+
+def test_v2_paths(tmp_path):
+    paths = PaperiumPaths(tmp_path / "repo")
+    root = tmp_path / "repo/.paperium"
+    assert paths.style_path == root / "style.md"
+    assert paths.report_template_path == root / "report-template.md"
+    assert paths.report_path == root / "REPORT.md"
+    assert paths.report_draft_path == root / "REPORT.draft.md"
+    assert paths.section_facts_path("ch1-s1") == root / "sections/ch1-s1.facts.md"
+    assert paths.section_prompt_path("ch1-s1", 2) == root / "prompts/ch1-s1.round2.prompt.md"
