@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from paperium.paths import PaperiumPaths
-from paperium.sections import mark_report_stale
+from paperium.sections import SectionError, mark_report_stale, safe_state_path
 from paperium.state import PaperiumState, SectionState
 
 
@@ -42,7 +42,11 @@ def reconcile_state(repo: Path, state: PaperiumState, *, fix: bool = False) -> l
             )
 
     for section in state.sections:
-        draft = repo / section.path
+        try:
+            draft = safe_state_path(repo, section.path, "section path")
+        except SectionError:
+            drift.append(f"section record has unsafe path: {section.id}")
+            continue
         if not draft.exists():
             drift.append(f"section record without file: {section.id}")
             continue

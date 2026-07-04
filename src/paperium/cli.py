@@ -298,7 +298,7 @@ def _run_section_v2(repo: Path, args: argparse.Namespace) -> int:
             paperium.sections.record_section(repo, state, args.section_id, approve=args.approve)
         elif action == "notes":
             section = paperium.sections.find_section(state, args.section_id)
-            draft = repo / section.path
+            draft = paperium.sections.safe_state_path(repo, section.path, "section path")
             text = draft.read_text(encoding="utf-8") if draft.exists() else ""
             for index, note in enumerate(extract_notes(text), start=1):
                 print(f"{index}. {note}")
