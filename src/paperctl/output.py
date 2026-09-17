@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 
@@ -123,9 +125,17 @@ def print_analyze_rich(result: Any) -> None:
 class RichAnalyzeProgressReporter:
     def __init__(self) -> None:
         self._console = Console()
+        self._progress = Progress(
+            TextColumn("[bold]Analyzing experiments"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total} done"),
+            TimeElapsedColumn(),
+            console=self._console,
+        )
+        self._task_id = self._progress.add_task("Analyzing experiments", total=0)
         self._items: dict[str, Any] = {}
         self._live = Live(
-            self._progress_table(),
+            self._renderable(),
             console=self._console,
             refresh_per_second=8,
             transient=False,
@@ -134,11 +144,51 @@ class RichAnalyzeProgressReporter:
 
     def on_update(self, item: Any) -> None:
         self._items[item.experiment_path] = item
-        self._live.update(self._progress_table(), refresh=True)
-        self._console.print(f"{item.status.value}: {item.experiment_path}")
+        self._live.update(self._renderable(), refresh=True)
 
     def close(self) -> None:
         self._live.stop()
+
+    def _renderable(self) -> Group:
+        self._sync_progress()
+        return Group(
+            Panel(self._summary_text(), title="paperctl analyze"),
+            self._progress,
+            self._progress_table(),
+        )
+
+    def _sync_progress(self) -> None:
+        total = len(self._items)
+        completed = sum(
+            1
+            for item in self._items.values()
+            if item.status.value
+            in {"skipped", "accepted", "failed", "blocked", "not_started"}
+        )
+        self._progress.update(self._task_id, total=total, completed=completed)
+
+    def _summary_text(self) -> str:
+        if not self._items:
+            return "Preparing analysis batch..."
+        counts = Counter(item.status.value for item in self._items.values())
+        finished = sum(
+            counts[status]
+            for status in ("skipped", "accepted", "failed", "blocked", "not_started")
+        )
+        parts = [
+            f"selected={len(self._items)}",
+            f"queued={counts['queued']}",
+            f"running={counts['running']}",
+            f"done={finished}",
+        ]
+        running = [
+            item.experiment_path
+            for item in self._items.values()
+            if item.status.value == "running"
+        ]
+        if running:
+            parts.append("running_now=" + ", ".join(running))
+        return " ".join(parts)
 
     def _progress_table(self) -> Table:
         return _analyze_table(self._items.values(), title="Analyze Progress")

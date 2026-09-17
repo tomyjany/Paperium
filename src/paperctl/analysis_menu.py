@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-import select
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, TextIO
+from typing import Any, Callable, Iterable, TextIO
 
 from jsonschema import ValidationError
+import questionary
+from questionary import Choice
 
 from paperctl._support.schema import validate_artifact
 from paperctl.analysis import preflight_experiment
@@ -31,6 +32,9 @@ class ExperimentMenuRow:
 class ExperimentMenuGroup:
     question_path: str
     rows: tuple[ExperimentMenuRow, ...]
+
+
+PromptRunner = Callable[[list[Choice]], list[str] | None]
 
 
 def build_experiment_menu_rows(
@@ -127,13 +131,16 @@ def run_checkbox_menu(
     rows: list[ExperimentMenuRow],
     input_keys: Iterable[str] | None = None,
     console: TextIO | None = None,
+    prompt_runner: PromptRunner | None = None,
 ) -> list[str]:
     if not rows:
         return []
+    if input_keys is None:
+        return _run_questionary_checkbox_menu(rows, prompt_runner=prompt_runner)
 
     selected: set[str] = set()
     current = _first_enabled_index(rows)
-    keys = iter(input_keys) if input_keys is not None else None
+    keys = iter(input_keys)
     output = console if console is not None else sys.stdout
 
     while True:
@@ -246,32 +253,53 @@ def _read_key(keys: Iterable[str] | None) -> str:
             return next(keys)  # type: ignore[arg-type]
         except StopIteration as exc:
             raise ExperimentMenuError("experiment menu input ended") from exc
-    return _read_tty_key()
+    raise ExperimentMenuError("experiment menu input ended")
 
 
-def _read_tty_key() -> str:
-    import termios
-    import tty
+def build_questionary_choices(rows: list[ExperimentMenuRow]) -> list[Choice]:
+    choices: list[Choice] = []
+    for row in rows:
+        disabled_reason = ", ".join(row.disabled_reasons)
+        title = row.experiment_path
+        if disabled_reason:
+            title = f"{title} ({disabled_reason})"
+        choices.append(
+            Choice(
+                title=title,
+                value=row.experiment_path,
+                disabled=disabled_reason or None,
+            )
+        )
+    return choices
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)
-        char = sys.stdin.read(1)
-        if char == "\x1b":
-            if not select.select([sys.stdin], [], [], 0)[0]:
-                return "escape"
-            suffix = sys.stdin.read(2)
-            if suffix == "[A":
-                return "up"
-            if suffix == "[B":
-                return "down"
-            return "escape"
-        if char in {"\n", "\r"}:
-            return "enter"
-        return char
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+def _run_questionary_checkbox_menu(
+    rows: list[ExperimentMenuRow],
+    *,
+    prompt_runner: PromptRunner | None,
+) -> list[str]:
+    choices = build_questionary_choices(rows)
+    selected = (
+        prompt_runner(choices)
+        if prompt_runner is not None
+        else questionary.checkbox(
+            "Select experiments to analyze",
+            choices=choices,
+            instruction="Use arrow keys to move, space to toggle, enter to run.",
+            validate=lambda values: True if values else "Select at least one experiment.",
+        ).ask()
+    )
+    if selected is None:
+        raise ExperimentMenuError("experiment menu cancelled")
+    enabled_paths = {row.experiment_path for row in rows if row.enabled}
+    selected_paths = [
+        row.experiment_path
+        for row in rows
+        if row.experiment_path in selected and row.experiment_path in enabled_paths
+    ]
+    if not selected_paths:
+        raise ExperimentMenuError("no experiments selected")
+    return selected_paths
 
 
 def _render_menu(

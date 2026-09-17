@@ -6,7 +6,13 @@ import re
 from typing import Any
 
 
-PROMPT_BUILDER_VERSION = 2
+PROMPT_BUILDER_VERSION = 4
+_MAX_PROMPT_CLAIM_STRING_CHARS = 512
+_MAX_PROMPT_CANONICAL_FACTS = 200
+_MAX_PROMPT_OBSERVED_VALUES = 300
+_MAX_PROMPT_AUX_ITEMS = 20
+_MAX_PROMPT_AUX_ITEM_JSON_CHARS = 1200
+_PROMPT_CLAIMABLE_ADAPTERS = {"json", "yaml"}
 
 PROMPT_TEMPLATE = """\
 You are analyzing one selected experiment for paperctl.
@@ -89,7 +95,9 @@ def build_analysis_prompt(job_context: dict[str, Any], evidence_packet: dict[str
     return PROMPT_TEMPLATE.format(
         context_lines=_context_lines(context),
         context_json=_stable_json(context),
-        evidence_packet_json=_stable_json(_sanitize_for_prompt(evidence_packet)),
+        evidence_packet_json=_stable_json(
+            _sanitize_for_prompt(_compact_evidence_packet_for_prompt(evidence_packet))
+        ),
     )
 
 
@@ -110,6 +118,157 @@ def _stable_json(value: Any) -> str:
         separators=(",", ": "),
         sort_keys=True,
     )
+
+
+def _compact_evidence_packet_for_prompt(evidence_packet: dict[str, Any]) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    passthrough_keys = (
+        "artifact_type",
+        "schema_version",
+        "question_path",
+        "experiment_path",
+        "inventory_path",
+        "preanalysis_disposition",
+        "execution_status",
+        "evidence_status",
+        "reason_codes",
+        "counts",
+    )
+    for key in passthrough_keys:
+        if key in evidence_packet:
+            compacted[key] = evidence_packet[key]
+
+    omitted_counts: dict[str, int] = {}
+    included_counts: dict[str, int] = {}
+    original_counts: dict[str, int] = {}
+
+    claimable_limits = {
+        "canonical_facts": _MAX_PROMPT_CANONICAL_FACTS,
+        "observed_values": _MAX_PROMPT_OBSERVED_VALUES,
+    }
+    for key in ("canonical_facts", "observed_values"):
+        values = evidence_packet.get(key, [])
+        original_counts[key] = len(values) if isinstance(values, list) else 0
+        compacted_values = _compact_claimable_values(values, limit=claimable_limits[key])
+        compacted[key] = compacted_values
+        included_counts[key] = len(compacted_values)
+        omitted_counts[key] = original_counts[key] - included_counts[key]
+
+    for key in ("previews", "diagnostics", "warnings", "conflicts"):
+        values = evidence_packet.get(key, [])
+        original_counts[key] = len(values) if isinstance(values, list) else 0
+        compacted_values = _compact_auxiliary_items(values)
+        compacted[key] = compacted_values
+        included_counts[key] = len(compacted_values)
+        omitted_counts[key] = original_counts[key] - included_counts[key]
+
+    unsupported = evidence_packet.get("unsupported_artifacts", [])
+    original_counts["unsupported_artifacts"] = (
+        len(unsupported) if isinstance(unsupported, list) else 0
+    )
+    compacted["unsupported_artifacts"] = []
+    included_counts["unsupported_artifacts"] = 0
+    omitted_counts["unsupported_artifacts"] = original_counts["unsupported_artifacts"]
+
+    compacted["prompt_compaction"] = {
+        "applied": True,
+        "original_counts": original_counts,
+        "included_counts": included_counts,
+        "omitted_counts": omitted_counts,
+        "rules": [
+            "canonical_facts and observed_values keep claimable scalar entries only",
+            "long string measured values are omitted instead of truncated",
+            "previews, diagnostics, warnings, and conflicts are bounded by item count and JSON size",
+            "unsupported artifact listings are omitted from the worker prompt",
+        ],
+    }
+    return compacted
+
+
+def _compact_claimable_values(values: Any, *, limit: int) -> list[dict[str, Any]]:
+    if not isinstance(values, list):
+        return []
+    candidates: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
+    for index, item in enumerate(values):
+        if not isinstance(item, dict) or not _is_prompt_claimable_value(item):
+            continue
+        candidates.append((_prompt_claimable_rank(item, index), _compact_claimable_value(item)))
+    candidates.sort(key=lambda pair: pair[0])
+    return [item for _rank, item in candidates[:limit]]
+
+
+def _is_prompt_claimable_value(item: dict[str, Any]) -> bool:
+    source = item.get("source")
+    if not isinstance(source, dict):
+        return False
+    if source.get("selector_type") != "json_pointer":
+        return False
+    adapter = source.get("adapter")
+    if adapter is not None and adapter not in _PROMPT_CLAIMABLE_ADAPTERS:
+        return False
+    value = item.get("value")
+    if isinstance(value, str) and len(value) > _MAX_PROMPT_CLAIM_STRING_CHARS:
+        return False
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return True
+    return False
+
+
+def _compact_claimable_value(item: dict[str, Any]) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    for key in ("fact_id", "value", "value_type", "unit"):
+        if key in item:
+            compacted[key] = item[key]
+    source = item.get("source")
+    if isinstance(source, dict):
+        compacted["source"] = {
+            key: source[key]
+            for key in ("path", "source_hash", "selector_type", "selector")
+            if key in source
+        }
+    return compacted
+
+
+def _prompt_claimable_rank(item: dict[str, Any], index: int) -> tuple[int, int, int]:
+    source = item.get("source")
+    path = source.get("path", "") if isinstance(source, dict) else ""
+    value_type = item.get("value_type")
+    if "/outputs/" in path:
+        path_rank = 0
+    elif path.endswith("metadata.json"):
+        path_rank = 1
+    elif "/.venv/" in path or "site-packages/" in path:
+        path_rank = 3
+    else:
+        path_rank = 2
+    type_rank = {
+        "number": 0,
+        "integer": 0,
+        "boolean": 1,
+        "null": 2,
+        "string": 3,
+    }.get(str(value_type), 4)
+    return (path_rank, type_rank, index)
+
+
+def _compact_auxiliary_items(values: Any) -> list[Any]:
+    if not isinstance(values, list):
+        return []
+    compacted: list[Any] = []
+    for item in values:
+        if len(compacted) >= _MAX_PROMPT_AUX_ITEMS:
+            break
+        sanitized = _sanitize_for_prompt(item)
+        serialized = json.dumps(
+            sanitized,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if len(serialized) > _MAX_PROMPT_AUX_ITEM_JSON_CHARS:
+            continue
+        compacted.append(sanitized)
+    return compacted
 
 
 def _context_lines(context: dict[str, Any]) -> str:

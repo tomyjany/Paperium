@@ -95,6 +95,7 @@ _MAX_PREVIEW_CHARS = 4000
 _MAX_DIAGNOSTICS = 20
 _MAX_DIAGNOSTIC_MESSAGE_CHARS = 1000
 _MAX_DIAGNOSTIC_DETAIL_BYTES = 4000
+_MAX_ANALYSIS_PROMPT_CHARS = 200_000
 
 
 def analyze_experiment(
@@ -661,6 +662,51 @@ def _run_backend_analysis(
     )
     backend_options = _effective_backend_options(config, backend_options_override)
     timeout_seconds = _effective_timeout_seconds(config, timeout_seconds_override)
+    if len(prompt) > _MAX_ANALYSIS_PROMPT_CHARS:
+        backend_result = AnalysisBackendResult(
+            backend_name=_state_backend_name(backend),
+            status="failed",
+            raw_response=None,
+            return_code=None,
+            stdout=None,
+            stderr=None,
+        )
+        diagnostics = [
+            _diagnostic(
+                "analysis_prompt_too_large",
+                "Analysis prompt exceeds the maximum backend input size after compaction.",
+                detail={
+                    "actual_chars": len(prompt),
+                    "max_chars": _MAX_ANALYSIS_PROMPT_CHARS,
+                },
+            )
+        ]
+        state = _build_analysis_state(
+            repo=repo,
+            config=config,
+            manifest_path=manifest_path,
+            manifest_entry=manifest_entry,
+            inventory=inventory,
+            evidence_packet=evidence_packet,
+            analysis_path=analysis_path,
+            backend_result=backend_result,
+            diagnostics=diagnostics,
+            analysis=None,
+            question_readme_path=question_readme_path,
+            question_readme_hash=question_readme_hash,
+            backend_options=backend_options,
+            timeout_seconds=timeout_seconds,
+            status="failed",
+        )
+        validate_artifact("analysis-state.schema.json", state)
+        validate_analysis_state_integrity(state)
+        write_json_atomic(repo / analysis_path, state)
+        return AnalyzeResult(
+            experiment_path=experiment_path,
+            analysis_path=analysis_path,
+            status="failed",
+            diagnostic_codes=["analysis_prompt_too_large"],
+        )
     job = AnalysisJob(
         repo=repo,
         config=config,
@@ -728,6 +774,13 @@ def _run_backend_analysis(
         status=status,
         diagnostic_codes=[diagnostic["code"] for diagnostic in state["diagnostics"]],
     )
+
+
+def _state_backend_name(backend: object) -> Literal["fake", "codex-exec"]:
+    name = getattr(backend, "name", None)
+    if name == "codex-exec":
+        return "codex-exec"
+    return "fake"
 
 
 def _analysis_and_diagnostics_from_backend_result(

@@ -611,6 +611,27 @@ def test_analysis_backend_options_and_timeout_overrides_reach_job(tmp_path):
     assert job.timeout_seconds == 17
 
 
+def test_analysis_prompt_too_large_fails_before_backend_invocation(tmp_path, monkeypatch):
+    repo = copy_fixture_repo(tmp_path)
+    backend = _valid_backend()
+    _run_analysis_prerequisites(repo)
+    monkeypatch.setattr("paperctl.analysis._MAX_ANALYSIS_PROMPT_CHARS", 1000)
+
+    result = analyze_experiment(repo, COMPLETED_EXPERIMENT, backend=backend)
+
+    assert backend.calls == 0
+    assert result.status == "failed"
+    assert result.diagnostic_codes == ["analysis_prompt_too_large"]
+    assert result.analysis_path is not None
+    state = read_json(repo / result.analysis_path)
+    assert state["status"] == "failed"
+    assert state["analysis"] is None
+    assert _diagnostic_codes(state) == ["analysis_prompt_too_large"]
+    assert state["diagnostics"][0]["detail"]["max_chars"] == 1000
+    assert state["diagnostics"][0]["detail"]["actual_chars"] > 1000
+    _assert_valid_analysis_state(state)
+
+
 @pytest.mark.parametrize("timeout_seconds", [0, -1])
 def test_analysis_timeout_override_rejects_non_positive_values_before_backend(
     tmp_path, timeout_seconds
@@ -1149,7 +1170,7 @@ def test_accepted_analysis_freshness_is_stale_when_config_hash_changes(tmp_path)
     ("target", "replacement"),
     [
         ("paperctl.analysis.prompt_template_hash", lambda: "sha256:" + "1" * 64),
-        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 3),
+        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 5),
         ("paperctl.analysis.ANALYSIS_VALIDATION_VERSION", 3),
         ("paperctl.analysis.FORMULA_EVALUATOR_VERSION", 2),
         ("paperctl.analysis.load_schema", lambda name: {"patched": name}),
@@ -1181,7 +1202,7 @@ def test_accepted_analysis_freshness_is_stale_when_static_fingerprint_inputs_cha
     ("target", "replacement"),
     [
         ("paperctl.analysis.prompt_template_hash", lambda: "sha256:" + "1" * 64),
-        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 3),
+        ("paperctl.analysis.PROMPT_BUILDER_VERSION", 5),
         ("paperctl.analysis.ANALYSIS_VALIDATION_VERSION", 3),
         ("paperctl.analysis.FORMULA_EVALUATOR_VERSION", 2),
     ],
@@ -1401,6 +1422,106 @@ def test_analysis_prompt_is_deterministic_and_uses_stable_json_formatting():
     assert prompt == build_analysis_prompt(context, dict(reversed(packet.items())))
     assert '  "canonical_facts": [' in prompt
     assert '  "artifact_type": "evidence_packet"' in prompt
+
+
+def test_analysis_prompt_compacts_large_unclaimable_sections():
+    packet = _evidence_packet()
+    packet["observed_values"] = [
+        {
+            "value": 17.25,
+            "value_type": "number",
+            "unit": "pages/s",
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/exp001-completed/"
+                    "outputs/metrics.json"
+                ),
+                "source_hash": "sha256:" + "c" * 64,
+                "selector_type": "json_pointer",
+                "selector": "/throughput",
+                "adapter": "json",
+            },
+        },
+        {
+            "value": "RAW_BACKEND_LOG_" + ("x" * 5000),
+            "value_type": "string",
+            "unit": None,
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/exp001-completed/"
+                    "outputs/log.json"
+                ),
+                "source_hash": "sha256:" + "d" * 64,
+                "selector_type": "json_pointer",
+                "selector": "/backend_log_excerpt",
+                "adapter": "json",
+            },
+        },
+    ]
+    packet["previews"] = [
+        {
+            "message": "RAW_PREVIEW_TEXT_" + ("y" * 5000),
+            "source": {
+                "path": "questions/q001-throughput/experiments/exp001-completed/outputs/log.txt",
+                "selector_type": "line_range",
+                "source_hash": "sha256:" + "e" * 64,
+            },
+        }
+    ]
+    packet["diagnostics"] = [
+        {
+            "message": "RAW_DIAGNOSTIC_TEXT_" + ("z" * 5000),
+            "source": {
+                "path": "questions/q001-throughput/experiments/exp001-completed/outputs/log.txt",
+                "selector_type": "line_range",
+                "source_hash": "sha256:" + "e" * 64,
+            },
+        }
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert "prompt_compaction" in prompt
+    assert '"value": 17.25' in prompt
+    assert "RAW_BACKEND_LOG_" not in prompt
+    assert "RAW_PREVIEW_TEXT_" not in prompt
+    assert "RAW_DIAGNOSTIC_TEXT_" not in prompt
+    assert '"previews": []' in prompt
+    assert '"diagnostics": []' in prompt
+    assert len(prompt) < 12000
+
+
+def test_analysis_prompt_limits_claimable_observed_values():
+    packet = _evidence_packet()
+    packet["observed_values"] = [
+        {
+            "value": index,
+            "value_type": "integer",
+            "unit": None,
+            "source": {
+                "path": (
+                    "questions/q001-throughput/experiments/exp001-completed/"
+                    f"outputs/metrics-{index}.json"
+                ),
+                "source_hash": "sha256:" + "c" * 64,
+                "selector_type": "json_pointer",
+                "selector": f"/values/{index}",
+                "adapter": "json",
+            },
+        }
+        for index in range(1000)
+    ]
+
+    prompt = build_analysis_prompt(_job_context(), packet)
+
+    assert '"observed_values": [' in prompt
+    assert '"value": 0' in prompt
+    assert '"value": 299' in prompt
+    assert '"value": 300' not in prompt
+    assert '"observed_values": 1000' in prompt
+    assert '"observed_values": 300' in prompt
+    assert '"observed_values": 700' in prompt
+    assert len(prompt) < 180000
 
 
 def test_analysis_prompt_omits_absolute_paths_temp_paths_and_timestamps():
